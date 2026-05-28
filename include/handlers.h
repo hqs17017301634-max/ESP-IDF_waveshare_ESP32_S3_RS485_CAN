@@ -431,16 +431,15 @@ struct HW3Handler : public CarManagerBase
             auto index = readMuxID(frame);
             if (index == 0)
             {
+                uint8_t offsetRaw = static_cast<uint8_t>((frame.data[3] >> 1) & 0x3F);
+                speedOffset = std::max(0, std::min((static_cast<int>(offsetRaw) - 30) * 5, 100));
+                // Keep the WebUI status offset live even when FSD injection is off.
+                hw3StockOffsetKph = speedOffset;
                 const bool fsdRequested = forceActivateRuntime || isADSelectedInUI(frame);
                 ADEnabled = fsdRequested && (!checkAD || checkAD());
             }
             if (index == 0 && ADEnabled && (!checkAD || checkAD()))
             {
-                speedOffset = std::max(std::min(((uint8_t)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
-                // Mirror stock offset to a global so the mux-2 override path
-                // (and the WebUI status JSON) can read it without going
-                // through the Shared<int> wrapper.
-                hw3StockOffsetKph = speedOffset;
 #if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
                 // 2.5.2 compat sends after the handler from the saved
                 // original frame, once the AP Gate allows injection.

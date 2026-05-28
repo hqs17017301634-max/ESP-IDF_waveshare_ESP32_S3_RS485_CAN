@@ -380,7 +380,6 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <div class="stat-grid" id="status-panel">
   <div class="stat"><div class="stat-lbl">CAN Bus</div><div class="stat-val" id="s-can">Offline</div></div>
   <div class="stat"><div class="stat-lbl">FSD Switch</div><div class="stat-val v-dim" id="s-inj">--</div></div>
-  <div class="stat"><div class="stat-lbl" title="Frames received per second">CAN Frame Rate</div><div class="stat-val v-dim" id="s-fps">0.0 Hz</div></div>
   <div class="stat"><div class="stat-lbl">RX</div><div class="stat-val v-acc" id="s-rx">0</div></div>
   <div class="stat"><div class="stat-lbl">TX</div><div class="stat-val v-acc" id="s-tx">0</div></div>
   <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
@@ -981,7 +980,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
 Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-28 00:45:45 +08:00</div>
+OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1003,7 +1002,7 @@ OTA timestamp: 2026-05-28 00:45:45 +08:00</div>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
     <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-28 00:45:45 +08:00</div>
+OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1301,7 +1300,7 @@ Object.assign(I18N_ZH,{
   '80/100/120 km/h buckets. Max target: 120/150/155 km/h.':'80/100/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-28 00:45:45 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-28 00:45:45 +08:00',
+  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-28 08:53:58 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-28 08:53:58 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -2171,6 +2170,11 @@ function boolTriText(v){
   if(v===null||typeof v==='undefined')return sleepT('unknown','未知');
   return v?sleepT('YES','是'):sleepT('NO','否');
 }
+function statusLimitOffsetText(d){
+  const value=(d.hw===1&&typeof d.hw3StockOffset!=='undefined')?d.hw3StockOffset:d.soff;
+  const n=Number(value);
+  return Number.isFinite(n)?(n+' km/h'):'--';
+}
 function seatStateText(v){
   v=Number(v);
   if(v===1)return sleepT('occupied','有人');
@@ -2865,15 +2869,13 @@ async function poll(){
     setClass('s-inj','stat-val '+(injecting?'v-ok':(armed&&d.apGate?'v-warn':'v-err')));
     setText('s-AD',apActive?'Active':'Inactive');
     setClass('s-AD','stat-val '+(apActive?'v-ok':'v-dim'));
-    setText('s-fps',fpsVal.toFixed(1)+' Hz');
-    setClass('s-fps','stat-val '+(fpsVal>5?'v-acc':'v-dim'));
     setText('s-rx',d.rx);
     setText('s-tx',d.tx);
     setText('s-txerr',d.txerr);
     setClass('s-txerr','stat-val '+(d.txerr>0?'v-warn':'v-dim'));
     setText('s-fd',d.fd||'--');
     setText('s-prof',profileDisplayName(d.hw,state.sp,state.spAuto));
-    setText('s-soff',d.soff||'0');
+    setText('s-soff',statusLimitOffsetText(d));
     setText('s-up',fmtUp(d.up));
     setText('s-mcp-raw','EFLG: 0x'+toHex(d.eflg,2));
     setFill('fps-fill',Math.min(fpsVal/20*100,100));
