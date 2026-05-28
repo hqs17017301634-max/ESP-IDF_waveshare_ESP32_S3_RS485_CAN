@@ -500,7 +500,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       <div class="setting-row">
         <div class="setting-info">
           <div class="setting-name">CAN/WiFi Auto Sleep</div>
-          <div class="setting-desc">After Park + vehicle lock stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX wakes the device.</div>
+          <div class="setting-desc">After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.</div>
         </div>
         <label class="tgl"><input type="checkbox" id="auto-sleep-tgl" onchange="saveAutoSleep()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
       </div>
@@ -981,7 +981,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
 Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-27 20:17:56 +08:00</div>
+OTA timestamp: 2026-05-28 00:45:45 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1003,7 +1003,7 @@ OTA timestamp: 2026-05-27 20:17:56 +08:00</div>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
     <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-27 20:17:56 +08:00</div>
+OTA timestamp: 2026-05-28 00:45:45 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1301,7 +1301,7 @@ Object.assign(I18N_ZH,{
   '80/100/120 km/h buckets. Max target: 120/150/155 km/h.':'80/100/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-27 20:17:56 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-27 20:17:56 +08:00',
+  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-28 00:45:45 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-28 00:45:45 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -1316,7 +1316,7 @@ Object.assign(I18N_ZH,{
   'none':'\u65e0',
   'whitelist override blacklist':'\u767d\u540d\u5355\u8986\u76d6\u9ed1\u540d\u5355',
   'CAN/WiFi Auto Sleep':'CAN/WiFi \u81ea\u52a8\u4f11\u7720',
-  'After Park + vehicle lock stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX wakes the device.':'P \u6863 + \u8f66\u8f86\u9501\u5b9a\u72b6\u6001\u7a33\u5b9a 10 \u79d2\u540e\uff0c\u5173\u95ed AP/STA WiFi \u548c CAN \u6ce8\u5165\uff0cCAN RX \u5524\u9192\u8bbe\u5907\u3002',
+  'After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.':'P 档 + 锁车 + 车内无人稳定 10 秒后，关闭 AP/STA WiFi 和 CAN 注入；CAN RX 或座椅占用可唤醒设备。',
   'Sleep diag: waiting for status':'\u4f11\u7720\u8bca\u65ad\uff1a\u7b49\u5f85\u72b6\u6001'
 });
 Object.assign(I18N_ZH,{
@@ -2126,6 +2126,7 @@ function sleepReasonText(v){
     'waiting park fallback':['waiting park fallback','等待停车兜底'],
     'waiting driver empty':['waiting vehicle empty','等待车内无人'],
     'gear not P':['gear not P','档位不是 P'],
+    'seat occupied':['seat occupied','座椅有人'],
     'waiting lock 0x273/0x339':['waiting lock signal','等待锁车信号'], 'driver present':['driver present','驾驶员在车内'],
     'DI drive power':['DI drive power','DI 行驶电源'], 'EPAS drive power':['EPAS drive power','EPAS 行驶电源'],
     'pending 10s':['pending 10s','10 秒倒计时'], 'ready':['ready','已就绪']
@@ -2137,7 +2138,7 @@ function sleepWakeSourceText(v){
   const x=m[String(v||'')];return x?sleepT(x[0],x[1]):(v||'--');
 }
 function sleepWakeReasonText(v){
-  const m={none:['none','无'],active:['active sleep','正在休眠'],gear:['gear wake','档位唤醒'],unlock:['unlock wake','解锁唤醒'],driver:['driver wake','驾驶员/DI 唤醒'],epas:['EPAS wake','EPAS 唤醒'],poweron:['power-on','上电'],external:['external reset','外部复位'],software:['software reset','软件复位'],brownout:['brownout','欠压复位'],deepsleep:['deep-sleep reset','深睡复位'],panic:['panic','异常复位'],task_wdt:['task watchdog','任务看门狗'],interrupt_wdt:['interrupt watchdog','中断看门狗'],other_wdt:['watchdog','看门狗']};
+  const m={none:['none','无'],active:['active sleep','正在休眠'],gear:['gear wake','档位唤醒'],unlock:['unlock wake','解锁唤醒'],driver:['driver wake','驾驶员/DI 唤醒'],seat:['seat wake','座椅唤醒'],epas:['EPAS wake','EPAS 唤醒'],poweron:['power-on','上电'],external:['external reset','外部复位'],software:['software reset','软件复位'],brownout:['brownout','欠压复位'],deepsleep:['deep-sleep reset','深睡复位'],panic:['panic','异常复位'],task_wdt:['task watchdog','任务看门狗'],interrupt_wdt:['interrupt watchdog','中断看门狗'],other_wdt:['watchdog','看门狗']};
   const x=m[String(v||'')];return x?sleepT(x[0],x[1]):(v||'--');
 }
 function sleepLockSourceText(v){
@@ -2170,6 +2171,35 @@ function boolTriText(v){
   if(v===null||typeof v==='undefined')return sleepT('unknown','未知');
   return v?sleepT('YES','是'):sleepT('NO','否');
 }
+function seatStateText(v){
+  v=Number(v);
+  if(v===1)return sleepT('occupied','有人');
+  if(v===0)return sleepT('empty','无人');
+  return sleepT('unknown','未知');
+}
+function seatAllEmpty(d){
+  return Number(d.sleepSeatDriver)===0&&Number(d.sleepSeatPassenger)===0&&Number(d.sleepSeatRearLeft)===0&&Number(d.sleepSeatRearCenter)===0&&Number(d.sleepSeatRearRight)===0;
+}
+function sleepCabinText(d,empty){
+  if(d.sleepSeatOccupied)return sleepT('occupied','有人')+' ('+sleepT('seat','座椅')+')';
+  if(d.sleepSeatKnown&&seatAllEmpty(d))return sleepT('empty','无人')+' ('+sleepT('seat','座椅')+')';
+  if(d.sleepSeatKnown)return sleepT('unknown','未知')+' ('+sleepT('partial seat','部分座椅')+')';
+  if(empty)return sleepT('empty','无人');
+  if(d.sleepDriverPresent===true)return sleepT('occupied','有人');
+  return sleepT('unknown','未知');
+}
+function sleepSeatLine(d){
+  const label=sleepT('Seats','座椅');
+  if(!d.sleepSeatKnown)return label+': '+sleepT('not seen','未收到');
+  const parts=[
+    sleepT('D','主')+': '+seatStateText(d.sleepSeatDriver),
+    sleepT('P','副')+': '+seatStateText(d.sleepSeatPassenger),
+    sleepT('RL','左后')+': '+seatStateText(d.sleepSeatRearLeft),
+    sleepT('RC','中后')+': '+seatStateText(d.sleepSeatRearCenter),
+    sleepT('RR','右后')+': '+seatStateText(d.sleepSeatRearRight)
+  ];
+  return label+': '+parts.join(' / ')+' '+sleepT('age','时间')+' '+ageText(d.sleepSeatAge);
+}
 function updateAutoSleepStatus(d){
   const el=$('auto-sleep-status');
   if(!el)return;
@@ -2182,13 +2212,14 @@ function updateAutoSleepStatus(d){
   const cd=countdown>=0?(sep+sleepT('sleep in ','\u4f11\u7720\u5012\u8ba1\u65f6 ')+Math.ceil(countdown/1000)+'s'):'';
   const stateLine=sleepT('Status','\u72b6\u6001')+': '+(d.autoSleep?'ON':'OFF')+' / '+sleepStateText(d.sleepState)+sep+sleepReasonText(d.sleepReason)+cd;
   const lockSrc=sleepLockSourceText(d.sleepLockSource);
-  const cabin=empty?sleepT('empty','\u65e0\u4eba'):(d.sleepDriverPresent===true?sleepT('occupied','\u6709\u4eba'):sleepT('unknown','\u672a\u77e5'));
+  const cabin=sleepCabinText(d,empty);
   const sleepKind=d.sleepLockFallback?sleepT('park fallback sleep','\u505c\u8f66\u515c\u5e95\u4f11\u7720'):(locked?sleepT('lock-signal sleep','\u9501\u8f66\u4fe1\u53f7\u4f11\u7720'):sleepT('software sleep','\u8f6f\u4ef6\u4f11\u7720'));
   const wakeKind=sleepWakeSourceText(d.sleepLastWakeSource)+' / '+sleepWakeReasonText(d.sleepLastWakeReason);
   const lines=[
     stateLine,
     sleepT('Gear','\u6863\u4f4d')+': '+gearText(d.sleepGear)+sep+sleepT('Park','\u505c\u8f66')+': '+boolTriText(park)+sep+sleepT('Locked','\u9501\u8f66')+': '+boolTriText(locked)+' ('+lockSrc+')',
     sleepT('Cabin','\u8f66\u5185')+': '+cabin,
+    sleepSeatLine(d),
     sleepT('Sleep count','\u4f11\u7720\u6b21\u6570')+': '+sleepT('session','\u672c\u6b21')+' '+(d.sleepCount||0)+' / '+sleepT('total','\u7d2f\u8ba1')+' '+(d.sleepTotalCount||0),
     sleepT('Last sleep','\u4e0a\u6b21\u4f11\u7720')+': '+fmtSleepDuration(d.sleepLastDurationSec),
     sleepT('Wake count','\u5524\u9192\u6b21\u6570')+': CAN '+(d.sleepCanWakeCount||0)+' / '+sleepT('reboot','\u91cd\u542f')+' '+(d.sleepRebootWakeCount||0),

@@ -166,7 +166,7 @@ void test_legacy_ignores_unrelated_can_id()
 
 void test_legacy_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(10, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(12, handler.filterIdCount());
 }
 
 void test_legacy_filter_ids_values()
@@ -181,7 +181,9 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(825, ids[6]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[7]);
     TEST_ASSERT_EQUAL_UINT32(929, ids[8]);
-    TEST_ASSERT_EQUAL_UINT32(1006, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(962, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(963, ids[10]);
+    TEST_ASSERT_EQUAL_UINT32(1006, ids[11]);
 }
 
 int main()

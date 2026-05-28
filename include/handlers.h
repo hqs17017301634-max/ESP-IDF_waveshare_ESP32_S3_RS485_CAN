@@ -161,12 +161,12 @@ struct LegacyHandler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 760 added for UI_mppSpeedLimit override (Legacy MPP custom-speed feature).
-        // 49/627/825/929 feed dashboard auto-sleep: EPAS power, UI lock request,
-        // VCSEC lock status, and front-controller driver/power state.
-        static constexpr uint32_t ids[] = {49, 69, 280, 390, 627, 760, 825, 921, 929, 1006};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 69, 280, 390, 627, 760, 825, 921, 929, 962, 963, 1006};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 12; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -319,12 +319,12 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        // 49/627/825/929 feed dashboard auto-sleep: EPAS power, UI lock request,
-        // VCSEC lock status, and front-controller driver/power state.
-        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 12; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -662,19 +662,19 @@ struct HW4Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
 #if defined(ISA_SPEED_CHIME_SUPPRESS) && !defined(ESP32_DASHBOARD)
-        // 49/627/825/929 feed dashboard auto-sleep: EPAS power, UI lock request,
-        // VCSEC lock status, and front-controller driver/power state.
-        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 12; }
 #else
-        // 49/627/825/929 feed dashboard auto-sleep: EPAS power, UI lock request,
-        // VCSEC lock status, and front-controller driver/power state.
-        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 12; }
 #endif
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override

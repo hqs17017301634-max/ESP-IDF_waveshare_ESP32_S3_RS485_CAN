@@ -164,6 +164,15 @@ static unsigned long dashSleepVcsecSeenMs = 0;
 static bool dashSleepDriverKnown = false;
 static bool dashSleepDriverPresent = false;
 static unsigned long dashSleepDriverSeenMs = 0;
+static constexpr int8_t kDashSleepSeatUnknown = -1;
+static constexpr int8_t kDashSleepSeatEmpty = 0;
+static constexpr int8_t kDashSleepSeatOccupied = 1;
+static int8_t dashSleepSeatDriver = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatPassenger = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatRearLeft = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatRearCenter = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatRearRight = kDashSleepSeatUnknown;
+static unsigned long dashSleepSeatSeenMs = 0;
 static bool dashSleepDiPowerKnown = false;
 static uint8_t dashSleepDiPowerState = 0xFF;
 static bool dashSleepEpasKnown = false;
@@ -837,6 +846,59 @@ static bool dashSleepSignalFresh(unsigned long seenMs, unsigned long maxAgeMs)
     return seenMs && dashSleepSignalAgeMs(seenMs) <= maxAgeMs;
 }
 
+static int8_t dashSleepSeatSwitchState(uint8_t raw)
+{
+    // DBC switch values: 1=off/empty, 2=on/occupied, 0=SNA, 3=fault.
+    if (raw == 1)
+        return kDashSleepSeatEmpty;
+    if (raw == 2)
+        return kDashSleepSeatOccupied;
+    return kDashSleepSeatUnknown;
+}
+
+static void dashSleepSetSeatState(int8_t &slot, int8_t state)
+{
+    if (state == kDashSleepSeatUnknown)
+        return;
+    slot = state;
+    dashSleepSeatSeenMs = millis();
+}
+
+static bool dashSleepSeatFresh()
+{
+    return dashSleepSignalFresh(dashSleepSeatSeenMs, kDashSleepDriveSignalFreshMs);
+}
+
+static bool dashSleepSeatKnown()
+{
+    return dashSleepSeatFresh() &&
+           (dashSleepSeatDriver != kDashSleepSeatUnknown ||
+            dashSleepSeatPassenger != kDashSleepSeatUnknown ||
+            dashSleepSeatRearLeft != kDashSleepSeatUnknown ||
+            dashSleepSeatRearCenter != kDashSleepSeatUnknown ||
+            dashSleepSeatRearRight != kDashSleepSeatUnknown);
+}
+
+static bool dashSleepSeatOccupied()
+{
+    return dashSleepSeatFresh() &&
+           (dashSleepSeatDriver == kDashSleepSeatOccupied ||
+            dashSleepSeatPassenger == kDashSleepSeatOccupied ||
+            dashSleepSeatRearLeft == kDashSleepSeatOccupied ||
+            dashSleepSeatRearCenter == kDashSleepSeatOccupied ||
+            dashSleepSeatRearRight == kDashSleepSeatOccupied);
+}
+
+static bool dashSleepAllSeatsKnownEmpty()
+{
+    return dashSleepSeatFresh() &&
+           dashSleepSeatDriver == kDashSleepSeatEmpty &&
+           dashSleepSeatPassenger == kDashSleepSeatEmpty &&
+           dashSleepSeatRearLeft == kDashSleepSeatEmpty &&
+           dashSleepSeatRearCenter == kDashSleepSeatEmpty &&
+           dashSleepSeatRearRight == kDashSleepSeatEmpty;
+}
+
 static void dashSleepClearLockState(const char *source)
 {
     dashSleepLockLatched = false;
@@ -984,6 +1046,8 @@ static bool dashSleepRecentDriveEvidence()
         dashSleepSignalFresh(dashSleepDriverSeenMs, kDashSleepDriveSignalFreshMs) &&
         dashSleepDriverPresent)
         return true;
+    if (dashSleepSeatOccupied())
+        return true;
     if (dashSleepDiPowerKnown &&
         dashSleepSignalFresh(dashSleepDriverSeenMs, kDashSleepDriveSignalFreshMs) &&
         dashSleepDiPowerState == 3)
@@ -1033,6 +1097,10 @@ static bool dashSleepParkStateFallbackReady()
 
 static bool dashSleepVehicleEmptyReady()
 {
+    if (dashSleepSeatOccupied())
+        return false;
+    if (dashSleepAllSeatsKnownEmpty())
+        return true;
     if (dashSleepDriverKnown && dashSleepDriverPresent &&
         dashSleepSignalFresh(dashSleepDriverSeenMs, kDashSleepDriveSignalFreshMs))
         return false;
@@ -1114,6 +1182,8 @@ static const char *dashSleepBlockReason()
             return "waiting park fallback";
         return "gear not P";
     }
+    if (dashSleepSeatOccupied())
+        return "seat occupied";
     if (!dashSleepDriverClearReady())
         return dashSleepDriverKnown ? "driver present" : "waiting driver empty";
     if (!dashSleepEffectiveLocked())
@@ -1215,12 +1285,66 @@ static void dashSleepObserveFrame(const CanFrame &frame)
         dashSleepDriverKnown = true;
         dashSleepDriverPresent = dashReadLeBits(frame, 7, 1) != 0;
         dashSleepDriverSeenMs = millis();
+        dashSleepSetSeatState(dashSleepSeatDriver,
+                              dashSleepDriverPresent ? kDashSleepSeatOccupied : kDashSleepSeatEmpty);
+        dashSleepSetSeatState(dashSleepSeatPassenger,
+                              dashReadLeBits(frame, 8, 1) ? kDashSleepSeatOccupied : kDashSleepSeatEmpty);
+        if (frame.dlc >= 6)
+        {
+            // 0x3A1 rear-row "unbuckled" values only prove occupancy when the
+            // chime reports OCCUPIED_AND_UNBUCKLED; value 0 can also mean a
+            // seated passenger is buckled, so do not use it as "empty".
+            if (dashReadLeBits(frame, 36, 2) == 1)
+                dashSleepSetSeatState(dashSleepSeatRearLeft, kDashSleepSeatOccupied);
+            if (dashReadLeBits(frame, 38, 2) == 1)
+                dashSleepSetSeatState(dashSleepSeatRearCenter, kDashSleepSeatOccupied);
+            if (dashReadLeBits(frame, 40, 2) == 1)
+                dashSleepSetSeatState(dashSleepSeatRearRight, kDashSleepSeatOccupied);
+        }
         dashSleepDiPowerKnown = true;
         dashSleepDiPowerState = static_cast<uint8_t>(dashReadLeBits(frame, 10, 3));
-        if (dashSleepDriverPresent || dashSleepDiPowerState == 3)
+        if (dashSleepSeatOccupied())
+        {
+            dashSleepClearLockState("seat");
+            dashSleepRequestWake("seat");
+        }
+        else if (dashSleepDiPowerState == 3)
         {
             dashSleepClearLockState("driver");
             dashSleepRequestWake("driver");
+        }
+    }
+    else if (frame.id == 962 && frame.dlc >= 8)
+    {
+        // 0x3C2 VCLEFT_switchStatus mux 0 carries direct seat occupancy
+        // switches. On LHD Model 3/Y, front-left is the driver seat.
+        if (dashReadLeBits(frame, 0, 2) == 0)
+        {
+            dashSleepSetSeatState(dashSleepSeatDriver,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 50, 2))));
+            dashSleepSetSeatState(dashSleepSeatRearCenter,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 54, 2))));
+            dashSleepSetSeatState(dashSleepSeatRearLeft,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 56, 2))));
+            dashSleepSetSeatState(dashSleepSeatRearRight,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 58, 2))));
+            if (dashSleepSeatOccupied())
+            {
+                dashSleepClearLockState("seat");
+                dashSleepRequestWake("seat");
+            }
+        }
+    }
+    else if (frame.id == 963 && frame.dlc >= 6)
+    {
+        // 0x3C3 VCRIGHT_switchStatus front occupancy switch supplements the
+        // 0x3A1 passenger-present bit when this frame is visible on the harness.
+        dashSleepSetSeatState(dashSleepSeatPassenger,
+                              dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 42, 2))));
+        if (dashSleepSeatOccupied())
+        {
+            dashSleepClearLockState("seat");
+            dashSleepRequestWake("seat");
         }
     }
     else if (frame.id == 49)
@@ -1914,6 +2038,22 @@ static void handleStatus()
     j += dashSleepDriverKnown ? (dashSleepDriverPresent ? "true" : "false") : "null";
     j += ",\"sleepDriverAge\":";
     j += dashSleepSignalAgeSec(dashSleepDriverSeenMs);
+    j += ",\"sleepSeatKnown\":";
+    j += dashSleepSeatKnown() ? "true" : "false";
+    j += ",\"sleepSeatOccupied\":";
+    j += dashSleepSeatOccupied() ? "true" : "false";
+    j += ",\"sleepSeatAge\":";
+    j += dashSleepSignalAgeSec(dashSleepSeatSeenMs);
+    j += ",\"sleepSeatDriver\":";
+    j += String(dashSleepSeatDriver);
+    j += ",\"sleepSeatPassenger\":";
+    j += String(dashSleepSeatPassenger);
+    j += ",\"sleepSeatRearLeft\":";
+    j += String(dashSleepSeatRearLeft);
+    j += ",\"sleepSeatRearCenter\":";
+    j += String(dashSleepSeatRearCenter);
+    j += ",\"sleepSeatRearRight\":";
+    j += String(dashSleepSeatRearRight);
     j += ",\"sleepDiPower\":";
     j += dashSleepDiPowerKnown ? String(dashSleepDiPowerState) : String(-1);
     j += ",\"sleepEpasPower\":";
