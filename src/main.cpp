@@ -154,7 +154,12 @@ static bool app_main_loop()
 #define APP_CAN_TASK_PRIORITY 18
 #endif
 #ifndef APP_CAN_TASK_CORE
-#define APP_CAN_TASK_CORE 0
+// Pin the CAN runtime task to core 1 (APP_CPU) so it does not contend with
+// WiFi/lwIP/httpd, which run on core 0. Isolating CAN echo/inject timing from
+// the WiFi stack removes scheduling jitter that can make the grey steering
+// wheel (AP/EAP available) flicker. Mirrors the Arduino 2.5.2 layout where the
+// CAN loop ran on the app core away from WiFi.
+#define APP_CAN_TASK_CORE 1
 #endif
 
 static void app_can_task(void *)

@@ -519,6 +519,11 @@ void WiFiClass::ensure()
     staNetif_ = esp_netif_create_default_wifi_sta();
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
+    // This firmware is a real-time CAN tool. Never let WiFi enter modem-sleep:
+    // its periodic wake bursts share core 0 with lwIP/httpd and add jitter to
+    // CAN echo/inject timing, which can make the grey steering wheel flicker.
+    // Set the global power-save default to NONE right after init.
+    esp_wifi_set_ps(WIFI_PS_NONE);
     if (!wifiEventHandlersRegistered)
     {
         esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEventHandler, nullptr, nullptr);
@@ -612,6 +617,10 @@ void WiFiClass::begin(const char *ssid, const char *pass)
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
     esp_wifi_start();
     esp_wifi_connect();
+    // esp_wifi_start() can reset power-save to the IDF default (MIN_MODEM);
+    // re-assert NONE so STA (re)connect never opens a modem-sleep window that
+    // would jitter CAN timing.
+    esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
 wl_status_t WiFiClass::status()
