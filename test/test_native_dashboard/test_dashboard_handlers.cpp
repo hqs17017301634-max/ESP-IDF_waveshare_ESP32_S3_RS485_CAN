@@ -23,6 +23,7 @@ void setUp()
 {
     mock.reset();
     onSendCount = 0;
+    canWriteRuntime = true;
     forceActivateRuntime = false;
     isaSpeedChimeSuppressRuntime = true;
     emergencyVehicleDetectionRuntime = true;
@@ -34,6 +35,7 @@ void tearDown() {}
 
 void test_dashboard_legacy_mux0_observes_ad_without_injecting()
 {
+    canWriteRuntime = false;
     LegacyHandler handler;
     prepareDashboardHandler(handler);
 
@@ -48,6 +50,25 @@ void test_dashboard_legacy_mux0_observes_ad_without_injecting()
     TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
     TEST_ASSERT_EQUAL_UINT8(0, onSendCount);
     TEST_ASSERT_EQUAL_HEX8(0x00, f.data[5] & 0x40);
+}
+
+void test_dashboard_legacy_can_write_off_blocks_mpp_send()
+{
+    canWriteRuntime = false;
+    LegacyHandler handler;
+    prepareDashboardHandler(handler);
+    legacyMppOverride = true;
+    legacyMppCustomEnable = true;
+
+    CanFrame f = {.id = 760};
+    f.dlc = 8;
+    f.data[6] = 0x08; // raw_mpp = 8 -> 40 kph
+
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
+    TEST_ASSERT_EQUAL_UINT8(0, onSendCount);
 }
 
 void test_dashboard_legacy_manual_profile_injects_mux0()
@@ -158,6 +179,7 @@ void test_dashboard_hw3_mux1_injects_nag_clear()
 
 void test_dashboard_hw4_mux0_observes_ad_without_injecting()
 {
+    canWriteRuntime = false;
     HW4Handler handler;
     prepareDashboardHandler(handler);
 
@@ -173,6 +195,28 @@ void test_dashboard_hw4_mux0_observes_ad_without_injecting()
     TEST_ASSERT_EQUAL_UINT8(0, onSendCount);
     TEST_ASSERT_EQUAL_HEX8(0x00, f.data[5] & 0x40);
     TEST_ASSERT_EQUAL_HEX8(0x00, f.data[7] & 0x18);
+}
+
+void test_dashboard_hw3_can_write_off_blocks_custom_speed_send()
+{
+    canWriteRuntime = false;
+    HW3Handler handler;
+    prepareDashboardHandler(handler);
+    handler.ADEnabled = true;
+    handler.speedProfileAuto = false;
+    handler.speedProfile = 2;
+    hw3CustomSpeed = true;
+    fusedSpeedLimitRaw = 8;
+
+    CanFrame f = {.id = 1021};
+    f.data[0] = 0x02;
+    f.data[7] = 0x00;
+
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
+    TEST_ASSERT_EQUAL_UINT8(0, onSendCount);
 }
 
 void test_dashboard_hw4_manual_profile_injects_mux2()
@@ -232,6 +276,7 @@ int main()
     UNITY_BEGIN();
 
     RUN_TEST(test_dashboard_legacy_mux0_observes_ad_without_injecting);
+    RUN_TEST(test_dashboard_legacy_can_write_off_blocks_mpp_send);
     RUN_TEST(test_dashboard_legacy_manual_profile_injects_mux0);
     RUN_TEST(test_dashboard_legacy_mux1_does_not_inject_nag_suppression);
     RUN_TEST(test_dashboard_hw3_mux0_injects_stable_activation);
@@ -239,6 +284,7 @@ int main()
     RUN_TEST(test_dashboard_hw3_ui_bit_clear_does_not_inject_builtin_activation);
     RUN_TEST(test_dashboard_hw3_mux1_injects_nag_clear);
     RUN_TEST(test_dashboard_hw4_mux0_observes_ad_without_injecting);
+    RUN_TEST(test_dashboard_hw3_can_write_off_blocks_custom_speed_send);
     RUN_TEST(test_dashboard_hw4_manual_profile_injects_mux2);
     RUN_TEST(test_dashboard_hw4_mux1_does_not_inject_nag_suppression);
     RUN_TEST(test_dashboard_hw4_isa_suppression_does_not_inject);

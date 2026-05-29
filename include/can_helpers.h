@@ -50,6 +50,13 @@ inline constexpr bool kInjectionAfterApBuildEnabled = false;
 #endif
 
 inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
+// Global transmit gate. Dashboard builds default to listen-only until the
+// runtime state is loaded; non-dashboard builds preserve previous behavior.
+#if defined(ESP32_DASHBOARD)
+inline Shared<bool> canWriteRuntime{false};
+#else
+inline Shared<bool> canWriteRuntime{true};
+#endif
 inline Shared<bool> forceActivateRuntime{false};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};

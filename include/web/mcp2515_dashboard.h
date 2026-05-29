@@ -23,10 +23,12 @@
 #include <esp_mac.h>
 #include <esp_ota_ops.h>
 #include <esp_pm.h>
+#include <esp_sleep.h>
 #include <esp_spiffs.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <driver/gpio.h>
 #include <esp_private/esp_clk.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -123,6 +125,64 @@ static bool forceActivate = false;
 // 当 true 时回到 3.0 早期行为：必须 Parked||APActive||Summoning 才允许注入。
 static bool apInjectionGate = false;
 static bool apAutoRestore = false;
+static bool dashAutoSleepEnabled = false;
+static bool dashSleepActive = false;
+static bool dashSleepWakeRequested = false;
+static const char *dashSleepWakeReason = "none";
+static bool dashSleepSavedCanActive = false;
+static bool dashSleepSavedForceActivate = false;
+static unsigned long dashSleepCandidateSinceMs = 0;
+static unsigned long dashSleepEnteredMs = 0;
+static uint32_t dashSleepEnterCount = 0;
+static uint32_t dashSleepPersistBootCount = 0;
+static uint32_t dashSleepPersistTotalCount = 0;
+static uint32_t dashSleepPersistCanWakeCount = 0;
+static uint32_t dashSleepPersistRebootWakeCount = 0;
+static uint32_t dashSleepCurrentRxCount = 0;
+static uint32_t dashSleepLastRxCount = 0;
+static uint32_t dashSleepLastEnterUptimeSec = 0;
+static uint32_t dashSleepLastWakeUptimeSec = 0;
+static constexpr uint32_t kDashSleepDurationUnknown = 0xFFFFFFFFUL;
+static uint32_t dashSleepLastDurationSec = kDashSleepDurationUnknown;
+static char dashSleepLastWakeSource[16] = "none";
+static char dashSleepLastWakeReason[24] = "none";
+static char dashSleepLastResetReason[24] = "unknown";
+static bool dashSleepLastEndedByReboot = false;
+static bool dashSleepGearKnown = false;
+static uint8_t dashSleepGear = 7;
+static unsigned long dashSleepGearSeenMs = 0;
+static bool dashSleepLockLatched = false;
+static const char *dashSleepLockSource = "none";
+static unsigned long dashSleepLockLatchedMs = 0;
+static bool dashSleepUiLockKnown = false;
+static uint8_t dashSleepUiLockRequest = 0xFF;
+static unsigned long dashSleepUiLockSeenMs = 0;
+static bool dashSleepVcsecKnown = false;
+static uint8_t dashSleepVcsecVehicleLockStatus = 0xFF;
+static uint8_t dashSleepVcsecSimpleLockStatus = 0xFF;
+static unsigned long dashSleepVcsecSeenMs = 0;
+static bool dashSleepDriverKnown = false;
+static bool dashSleepDriverPresent = false;
+static unsigned long dashSleepDriverSeenMs = 0;
+static constexpr int8_t kDashSleepSeatUnknown = -1;
+static constexpr int8_t kDashSleepSeatEmpty = 0;
+static constexpr int8_t kDashSleepSeatOccupied = 1;
+static int8_t dashSleepSeatDriver = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatPassenger = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatRearLeft = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatRearCenter = kDashSleepSeatUnknown;
+static int8_t dashSleepSeatRearRight = kDashSleepSeatUnknown;
+static unsigned long dashSleepSeatSeenMs = 0;
+static bool dashSleepDiPowerKnown = false;
+static uint8_t dashSleepDiPowerState = 0xFF;
+static bool dashSleepEpasKnown = false;
+static uint8_t dashSleepEpasPowerMode = 0xFF;
+static unsigned long dashSleepEpasSeenMs = 0;
+static constexpr unsigned long kDashAutoSleepDelayMs = 10000;
+static constexpr unsigned long kDashSleepLightSliceUs = 500000;
+static constexpr unsigned long kDashSleepLockFallbackMs = 30000;
+static constexpr unsigned long kDashSleepDriveSignalFreshMs = 30000;
+static constexpr unsigned long kDashSleepLatchedLockFreshMs = 60000;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
@@ -712,10 +772,7 @@ static String jsonEscape(const String &s)
     return out;
 }
 
-static bool dashCheckADEnabled()
-{
-    return canActive;
-}
+static bool dashApInjectionAllowed();
 
 static bool dashApInjectionAllowed()
 {
@@ -723,9 +780,19 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
+static bool dashFsdInjectionActive()
+{
+    return canActive && forceActivate && dashApInjectionAllowed();
+}
+
+static bool dashCheckADEnabled()
+{
+    return forceActivate && dashApInjectionAllowed();
+}
+
 static bool dashInjectionActive()
 {
-    return canActive && dashApInjectionAllowed();
+    return dashFsdInjectionActive();
 }
 
 static bool dashApRestoreBraking()
@@ -741,9 +808,570 @@ static bool dashApRestoreStabilityBlocked()
             apRestoreState.tcActive);
 }
 
+static uint32_t dashReadLeBits(const CanFrame &frame, uint8_t startBit, uint8_t length)
+{
+    uint32_t value = 0;
+    for (uint8_t i = 0; i < length; i++)
+    {
+        uint8_t bit = startBit + i;
+        uint8_t byteIndex = bit / 8;
+        if (byteIndex >= frame.dlc || byteIndex >= 8)
+            break;
+        if (frame.data[byteIndex] & (1U << (bit % 8)))
+            value |= (1UL << i);
+    }
+    return value;
+}
+
+static const char *dashSleepStateText()
+{
+    if (dashSleepActive)
+        return "sleep";
+    if (!dashAutoSleepEnabled)
+        return "off";
+    if (dashSleepCandidateSinceMs)
+        return "pending";
+    return "awake";
+}
+
+static long dashSleepSignalAgeSec(unsigned long seenMs)
+{
+    if (!seenMs)
+        return -1;
+    return static_cast<long>((millis() - seenMs) / 1000UL);
+}
+
+static unsigned long dashSleepSignalAgeMs(unsigned long seenMs)
+{
+    if (!seenMs)
+        return 0xFFFFFFFFUL;
+    return millis() - seenMs;
+}
+
+static bool dashSleepSignalFresh(unsigned long seenMs, unsigned long maxAgeMs)
+{
+    return seenMs && dashSleepSignalAgeMs(seenMs) <= maxAgeMs;
+}
+
+static int8_t dashSleepSeatSwitchState(uint8_t raw)
+{
+    // DBC switch values: 1=off/empty, 2=on/occupied, 0=SNA, 3=fault.
+    if (raw == 1)
+        return kDashSleepSeatEmpty;
+    if (raw == 2)
+        return kDashSleepSeatOccupied;
+    return kDashSleepSeatUnknown;
+}
+
+static void dashSleepSetSeatState(int8_t &slot, int8_t state)
+{
+    if (state == kDashSleepSeatUnknown)
+        return;
+    slot = state;
+    dashSleepSeatSeenMs = millis();
+}
+
+static bool dashSleepSeatFresh()
+{
+    return dashSleepSignalFresh(dashSleepSeatSeenMs, kDashSleepDriveSignalFreshMs);
+}
+
+static bool dashSleepSeatKnown()
+{
+    return dashSleepSeatFresh() &&
+           (dashSleepSeatDriver != kDashSleepSeatUnknown ||
+            dashSleepSeatPassenger != kDashSleepSeatUnknown ||
+            dashSleepSeatRearLeft != kDashSleepSeatUnknown ||
+            dashSleepSeatRearCenter != kDashSleepSeatUnknown ||
+            dashSleepSeatRearRight != kDashSleepSeatUnknown);
+}
+
+static bool dashSleepSeatOccupied()
+{
+    return dashSleepSeatFresh() &&
+           (dashSleepSeatDriver == kDashSleepSeatOccupied ||
+            dashSleepSeatPassenger == kDashSleepSeatOccupied ||
+            dashSleepSeatRearLeft == kDashSleepSeatOccupied ||
+            dashSleepSeatRearCenter == kDashSleepSeatOccupied ||
+            dashSleepSeatRearRight == kDashSleepSeatOccupied);
+}
+
+static bool dashSleepAllSeatsKnownEmpty()
+{
+    return dashSleepSeatFresh() &&
+           dashSleepSeatDriver == kDashSleepSeatEmpty &&
+           dashSleepSeatPassenger == kDashSleepSeatEmpty &&
+           dashSleepSeatRearLeft == kDashSleepSeatEmpty &&
+           dashSleepSeatRearCenter == kDashSleepSeatEmpty &&
+           dashSleepSeatRearRight == kDashSleepSeatEmpty;
+}
+
+static void dashSleepClearLockState(const char *source)
+{
+    dashSleepLockLatched = false;
+    dashSleepLockSource = source ? source : "none";
+    dashSleepLockLatchedMs = 0;
+    dashSleepCandidateSinceMs = 0;
+}
+
+static void dashSleepLatchLock(const char *source)
+{
+    dashSleepLockLatched = true;
+    dashSleepLockSource = source ? source : "lock";
+    dashSleepLockLatchedMs = millis();
+}
+
+#ifdef ESP_PLATFORM
+static const char *dashResetReasonName(esp_reset_reason_t reason);
+#endif
+
+static const char *dashSleepCurrentResetReason()
+{
+#ifdef ESP_PLATFORM
+    return dashResetReasonName(esp_reset_reason());
+#else
+    return "unknown";
+#endif
+}
+
+static void dashSleepSetText(char *dst, size_t dstLen, const char *src)
+{
+    if (!dst || dstLen == 0)
+        return;
+    strlcpy(dst, src ? src : "none", dstLen);
+}
+
+static void dashSleepLoadText(Preferences &p, const char *key, char *dst, size_t dstLen, const char *fallback)
+{
+    String v = p.getString(key, fallback ? fallback : "");
+    dashSleepSetText(dst, dstLen, v.c_str());
+}
+
+static uint32_t dashSleepGetU32(Preferences &p, const char *key, uint32_t fallback)
+{
+    String v = p.getString(key, "");
+    if (v.length() == 0)
+        return fallback;
+    return static_cast<uint32_t>(strtoul(v.c_str(), nullptr, 10));
+}
+
+static void dashSleepPutU32(Preferences &p, const char *key, uint32_t value)
+{
+    p.putString(key, String(value));
+}
+
+static void dashSleepPersistDiag(Preferences &p)
+{
+    dashSleepPutU32(p, "slp_boots", dashSleepPersistBootCount);
+    dashSleepPutU32(p, "slp_total", dashSleepPersistTotalCount);
+    dashSleepPutU32(p, "slp_wcan", dashSleepPersistCanWakeCount);
+    dashSleepPutU32(p, "slp_wreboot", dashSleepPersistRebootWakeCount);
+    dashSleepPutU32(p, "slp_lent", dashSleepLastEnterUptimeSec);
+    dashSleepPutU32(p, "slp_lwake", dashSleepLastWakeUptimeSec);
+    dashSleepPutU32(p, "slp_ldur", dashSleepLastDurationSec);
+    dashSleepPutU32(p, "slp_lrx", dashSleepLastRxCount);
+    p.putString("slp_lsrc", dashSleepLastWakeSource);
+    p.putString("slp_lwhy", dashSleepLastWakeReason);
+    p.putString("slp_rst", dashSleepLastResetReason);
+}
+
+static void dashSleepLoadPersistentDiag(Preferences &p)
+{
+    dashSleepPersistBootCount = dashSleepGetU32(p, "slp_boots", 0) + 1;
+    dashSleepPersistTotalCount = dashSleepGetU32(p, "slp_total", 0);
+    dashSleepPersistCanWakeCount = dashSleepGetU32(p, "slp_wcan", 0);
+    dashSleepPersistRebootWakeCount = dashSleepGetU32(p, "slp_wreboot", 0);
+    dashSleepLastEnterUptimeSec = dashSleepGetU32(p, "slp_lent", 0);
+    dashSleepLastWakeUptimeSec = dashSleepGetU32(p, "slp_lwake", 0);
+    dashSleepLastDurationSec = dashSleepGetU32(p, "slp_ldur", kDashSleepDurationUnknown);
+    dashSleepLastRxCount = dashSleepGetU32(p, "slp_lrx", 0);
+    dashSleepLoadText(p, "slp_lsrc", dashSleepLastWakeSource, sizeof(dashSleepLastWakeSource), "none");
+    dashSleepLoadText(p, "slp_lwhy", dashSleepLastWakeReason, sizeof(dashSleepLastWakeReason), "none");
+    dashSleepSetText(dashSleepLastResetReason, sizeof(dashSleepLastResetReason), dashSleepCurrentResetReason());
+
+    dashSleepLastEndedByReboot = p.getBool("slp_active", false);
+    if (dashSleepLastEndedByReboot)
+    {
+        dashSleepPersistRebootWakeCount++;
+        dashSleepSetText(dashSleepLastWakeSource, sizeof(dashSleepLastWakeSource), "reboot");
+        dashSleepSetText(dashSleepLastWakeReason, sizeof(dashSleepLastWakeReason), dashSleepLastResetReason);
+        dashSleepLastWakeUptimeSec = 0;
+        dashSleepLastDurationSec = kDashSleepDurationUnknown;
+        p.putBool("slp_active", false);
+    }
+
+    dashSleepPersistDiag(p);
+}
+
+static void dashSleepPersistEnterDiag()
+{
+    dashSleepPersistTotalCount++;
+    dashSleepCurrentRxCount = 0;
+    dashSleepLastRxCount = 0;
+    dashSleepLastEnterUptimeSec = (millis() - startMs) / 1000UL;
+    dashSleepLastWakeUptimeSec = 0;
+    dashSleepLastDurationSec = kDashSleepDurationUnknown;
+    dashSleepSetText(dashSleepLastWakeSource, sizeof(dashSleepLastWakeSource), "sleeping");
+    dashSleepSetText(dashSleepLastWakeReason, sizeof(dashSleepLastWakeReason), "active");
+
+    Preferences p;
+    if (!p.begin(PREFS_NS, false))
+        return;
+    p.putBool("slp_active", true);
+    dashSleepPersistDiag(p);
+    p.end();
+}
+
+static void dashSleepPersistWakeDiag(const char *reason)
+{
+    dashSleepPersistCanWakeCount++;
+    dashSleepLastRxCount = dashSleepCurrentRxCount;
+    dashSleepLastWakeUptimeSec = (millis() - startMs) / 1000UL;
+    dashSleepLastDurationSec = dashSleepEnteredMs ? ((millis() - dashSleepEnteredMs) / 1000UL) : kDashSleepDurationUnknown;
+    dashSleepSetText(dashSleepLastWakeSource, sizeof(dashSleepLastWakeSource), "CAN");
+    dashSleepSetText(dashSleepLastWakeReason, sizeof(dashSleepLastWakeReason), reason ? reason : "unknown");
+    dashSleepLastEndedByReboot = false;
+
+    Preferences p;
+    if (!p.begin(PREFS_NS, false))
+        return;
+    p.putBool("slp_active", false);
+    dashSleepPersistDiag(p);
+    p.end();
+}
+
+static bool dashSleepVcsecStatusLocked(uint8_t status);
+static bool dashSleepVcsecStatusUnlocked(uint8_t status);
+
+static bool dashSleepRecentDriveEvidence()
+{
+    if (dashSleepGearKnown &&
+        dashSleepSignalFresh(dashSleepGearSeenMs, kDashSleepDriveSignalFreshMs) &&
+        (dashSleepGear == 2 || dashSleepGear == 3 || dashSleepGear == 4))
+        return true;
+    if (dashSleepDriverKnown &&
+        dashSleepSignalFresh(dashSleepDriverSeenMs, kDashSleepDriveSignalFreshMs) &&
+        dashSleepDriverPresent)
+        return true;
+    if (dashSleepSeatOccupied())
+        return true;
+    if (dashSleepDiPowerKnown &&
+        dashSleepSignalFresh(dashSleepDriverSeenMs, kDashSleepDriveSignalFreshMs) &&
+        dashSleepDiPowerState == 3)
+        return true;
+    if (dashSleepEpasKnown &&
+        dashSleepSignalFresh(dashSleepEpasSeenMs, kDashSleepDriveSignalFreshMs) &&
+        (dashSleepEpasPowerMode == 1 || dashSleepEpasPowerMode == 2))
+        return true;
+    return false;
+}
+
+static bool dashSleepRecentUnlockEvidence()
+{
+    if (dashSleepUiLockKnown &&
+        dashSleepSignalFresh(dashSleepUiLockSeenMs, kDashSleepDriveSignalFreshMs) &&
+        (dashSleepUiLockRequest == 2 || dashSleepUiLockRequest == 3))
+        return true;
+    if (dashSleepVcsecKnown &&
+        dashSleepSignalFresh(dashSleepVcsecSeenMs, kDashSleepDriveSignalFreshMs) &&
+        (dashSleepVcsecSimpleLockStatus == 1 ||
+         dashSleepVcsecStatusUnlocked(dashSleepVcsecVehicleLockStatus)))
+        return true;
+    return false;
+}
+
+static bool dashSleepParkStateFallbackReady()
+{
+    if (millis() < kDashSleepLockFallbackMs)
+        return false;
+    if (dashSleepRecentDriveEvidence())
+        return false;
+
+    // Park fallback: some harnesses stop publishing a clean P value after the
+    // car is locked/asleep and only leave SNA/invalid plus low-power hints.
+    bool gearLowPower = dashSleepGearKnown &&
+                        (dashSleepGear == 0 || dashSleepGear == 7 ||
+                         !dashSleepSignalFresh(dashSleepGearSeenMs, kDashSleepDriveSignalFreshMs));
+    bool epasLowPower = dashSleepEpasKnown &&
+                        dashSleepSignalFresh(dashSleepEpasSeenMs, kDashSleepLockFallbackMs * 2) &&
+                        (dashSleepEpasPowerMode == 0 || dashSleepEpasPowerMode == 6);
+    bool diLowPower = dashSleepDiPowerKnown &&
+                      dashSleepSignalFresh(dashSleepDriverSeenMs, kDashSleepLockFallbackMs * 2) &&
+                      (dashSleepDiPowerState == 0 || dashSleepDiPowerState == 4);
+
+    return gearLowPower && (epasLowPower || diLowPower);
+}
+
+static bool dashSleepVehicleEmptyReady()
+{
+    if (dashSleepSeatOccupied())
+        return false;
+    if (dashSleepAllSeatsKnownEmpty())
+        return true;
+    if (dashSleepDriverKnown && dashSleepDriverPresent &&
+        dashSleepSignalFresh(dashSleepDriverSeenMs, kDashSleepDriveSignalFreshMs))
+        return false;
+    if (dashSleepDriverKnown && !dashSleepDriverPresent)
+        return true;
+    if (dashSleepLockLatched &&
+        dashSleepSignalFresh(dashSleepLockLatchedMs, kDashSleepLatchedLockFreshMs) &&
+        !dashSleepRecentDriveEvidence())
+        return true;
+
+    // If driver-present is not visible on this harness, a quiet low-power
+    // parked state is the practical empty-cabin fallback.
+    return dashSleepParkStateFallbackReady() && !dashSleepRecentUnlockEvidence();
+}
+
+static bool dashSleepLowPowerLockFallbackReady()
+{
+    if (dashSleepRecentUnlockEvidence())
+        return false;
+
+    // Some harnesses never expose 0x273/0x339 after lock. Treat the car as
+    // locked only when drive evidence is gone and low-power parked-state
+    // hints remain. This is intentionally independent from cabin inference to
+    // avoid deadlock when 0x3A1 driver-present is not visible on the harness.
+    return dashSleepParkStateFallbackReady();
+}
+
+static bool dashSleepEffectiveLocked()
+{
+    return (dashSleepLockLatched &&
+            dashSleepSignalFresh(dashSleepLockLatchedMs, kDashSleepLatchedLockFreshMs)) ||
+           dashSleepLowPowerLockFallbackReady();
+}
+
+static const char *dashSleepEffectiveLockSource()
+{
+    if (dashSleepLockLatched &&
+        dashSleepSignalFresh(dashSleepLockLatchedMs, kDashSleepLatchedLockFreshMs))
+        return dashSleepLockSource;
+    if (dashSleepLowPowerLockFallbackReady())
+        return "fallback";
+    return "none";
+}
+
+static bool dashSleepParkStateReady()
+{
+    if (dashSleepGearKnown)
+    {
+        if (dashSleepGear == 1)
+            return true;
+        // R/N/D are definitive awake/drive states. INVALID/SNA may be emitted
+        // while modules are powering down, so allow the lock-state fallback.
+        if ((dashSleepGear == 2 || dashSleepGear == 3 || dashSleepGear == 4) &&
+            dashSleepSignalFresh(dashSleepGearSeenMs, kDashSleepDriveSignalFreshMs))
+            return false;
+    }
+
+    return dashSleepParkStateFallbackReady();
+}
+
+static bool dashSleepDriverClearReady()
+{
+    return dashSleepVehicleEmptyReady();
+}
+
+static const char *dashSleepBlockReason()
+{
+    if (!dashAutoSleepEnabled)
+        return "off";
+    if (dashSleepActive)
+        return "sleeping";
+    if (Update.isRunning())
+        return "ota running";
+    if (!dashSleepParkStateReady())
+    {
+        if (!dashSleepGearKnown)
+            return "waiting P or park state";
+        if (dashSleepGear == 0 || dashSleepGear == 7)
+            return "waiting park fallback";
+        return "gear not P";
+    }
+    if (dashSleepSeatOccupied())
+        return "seat occupied";
+    if (!dashSleepDriverClearReady())
+        return dashSleepDriverKnown ? "driver present" : "waiting driver empty";
+    if (!dashSleepEffectiveLocked())
+        return "waiting lock 0x273/0x339";
+    if (dashSleepCandidateSinceMs)
+        return "pending 10s";
+    return "ready";
+}
+
+static bool dashSleepParkLockReady()
+{
+    if (!dashAutoSleepEnabled || dashSleepActive || Update.isRunning())
+        return false;
+    if (!dashSleepParkStateReady())
+        return false;
+    if (!dashSleepDriverClearReady())
+        return false;
+    if (!dashSleepEffectiveLocked())
+        return false;
+    return true;
+}
+
+static bool dashSleepVcsecStatusLocked(uint8_t status)
+{
+    return status == 2 || status == 5 || status == 8 ||
+           status == 10 || status == 12 || status == 15;
+}
+
+static bool dashSleepVcsecStatusUnlocked(uint8_t status)
+{
+    return status == 1 || status == 3 || status == 4 ||
+           status == 6 || status == 7 || status == 9 ||
+           status == 11 || status == 13 || status == 14;
+}
+
+static void dashSleepRequestWake(const char *reason)
+{
+    if (!dashSleepActive)
+        return;
+    dashSleepWakeReason = reason;
+    dashSleepWakeRequested = true;
+}
+
+static void dashSleepObserveFrame(const CanFrame &frame)
+{
+    if (dashSleepActive)
+        dashSleepCurrentRxCount++;
+    if (frame.dlc < 3)
+        return;
+
+    if (frame.id == 280)
+    {
+        uint8_t gear = readDIGear(frame);
+        dashSleepGearKnown = true;
+        dashSleepGear = gear;
+        dashSleepGearSeenMs = millis();
+        if (gear == 2 || gear == 3 || gear == 4)
+        {
+            dashSleepClearLockState("drive");
+            dashSleepRequestWake("gear");
+        }
+    }
+    else if (frame.id == 627)
+    {
+        uint8_t lockRequest = static_cast<uint8_t>(dashReadLeBits(frame, 17, 3));
+        dashSleepUiLockKnown = true;
+        dashSleepUiLockRequest = lockRequest;
+        dashSleepUiLockSeenMs = millis();
+        if (lockRequest == 1 || lockRequest == 4)
+        {
+            dashSleepLatchLock("0x273");
+        }
+        else if (lockRequest == 2 || lockRequest == 3)
+        {
+            dashSleepClearLockState("0x273");
+            dashSleepRequestWake("unlock");
+        }
+    }
+    else if (frame.id == 825)
+    {
+        uint8_t vehicleLockStatus = static_cast<uint8_t>(dashReadLeBits(frame, 12, 4));
+        uint8_t simpleLockStatus = static_cast<uint8_t>(dashReadLeBits(frame, 54, 2));
+        dashSleepVcsecKnown = true;
+        dashSleepVcsecVehicleLockStatus = vehicleLockStatus;
+        dashSleepVcsecSimpleLockStatus = simpleLockStatus;
+        dashSleepVcsecSeenMs = millis();
+        if (simpleLockStatus == 2 || dashSleepVcsecStatusLocked(vehicleLockStatus))
+        {
+            dashSleepLatchLock("0x339");
+        }
+        else if (simpleLockStatus == 1 || dashSleepVcsecStatusUnlocked(vehicleLockStatus))
+        {
+            dashSleepClearLockState("0x339");
+            dashSleepRequestWake("unlock");
+        }
+    }
+    else if (frame.id == 929 && frame.dlc >= 2)
+    {
+        dashSleepDriverKnown = true;
+        dashSleepDriverPresent = dashReadLeBits(frame, 7, 1) != 0;
+        dashSleepDriverSeenMs = millis();
+        dashSleepSetSeatState(dashSleepSeatDriver,
+                              dashSleepDriverPresent ? kDashSleepSeatOccupied : kDashSleepSeatEmpty);
+        dashSleepSetSeatState(dashSleepSeatPassenger,
+                              dashReadLeBits(frame, 8, 1) ? kDashSleepSeatOccupied : kDashSleepSeatEmpty);
+        if (frame.dlc >= 6)
+        {
+            // 0x3A1 rear-row "unbuckled" values only prove occupancy when the
+            // chime reports OCCUPIED_AND_UNBUCKLED; value 0 can also mean a
+            // seated passenger is buckled, so do not use it as "empty".
+            if (dashReadLeBits(frame, 36, 2) == 1)
+                dashSleepSetSeatState(dashSleepSeatRearLeft, kDashSleepSeatOccupied);
+            if (dashReadLeBits(frame, 38, 2) == 1)
+                dashSleepSetSeatState(dashSleepSeatRearCenter, kDashSleepSeatOccupied);
+            if (dashReadLeBits(frame, 40, 2) == 1)
+                dashSleepSetSeatState(dashSleepSeatRearRight, kDashSleepSeatOccupied);
+        }
+        dashSleepDiPowerKnown = true;
+        dashSleepDiPowerState = static_cast<uint8_t>(dashReadLeBits(frame, 10, 3));
+        if (dashSleepSeatOccupied())
+        {
+            dashSleepClearLockState("seat");
+            dashSleepRequestWake("seat");
+        }
+        else if (dashSleepDiPowerState == 3)
+        {
+            dashSleepClearLockState("driver");
+            dashSleepRequestWake("driver");
+        }
+    }
+    else if (frame.id == 962 && frame.dlc >= 8)
+    {
+        // 0x3C2 VCLEFT_switchStatus mux 0 carries direct seat occupancy
+        // switches. On LHD Model 3/Y, front-left is the driver seat.
+        if (dashReadLeBits(frame, 0, 2) == 0)
+        {
+            dashSleepSetSeatState(dashSleepSeatDriver,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 50, 2))));
+            dashSleepSetSeatState(dashSleepSeatRearCenter,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 54, 2))));
+            dashSleepSetSeatState(dashSleepSeatRearLeft,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 56, 2))));
+            dashSleepSetSeatState(dashSleepSeatRearRight,
+                                  dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 58, 2))));
+            if (dashSleepSeatOccupied())
+            {
+                dashSleepClearLockState("seat");
+                dashSleepRequestWake("seat");
+            }
+        }
+    }
+    else if (frame.id == 963 && frame.dlc >= 6)
+    {
+        // 0x3C3 VCRIGHT_switchStatus front occupancy switch supplements the
+        // 0x3A1 passenger-present bit when this frame is visible on the harness.
+        dashSleepSetSeatState(dashSleepSeatPassenger,
+                              dashSleepSeatSwitchState(static_cast<uint8_t>(dashReadLeBits(frame, 42, 2))));
+        if (dashSleepSeatOccupied())
+        {
+            dashSleepClearLockState("seat");
+            dashSleepRequestWake("seat");
+        }
+    }
+    else if (frame.id == 49)
+    {
+        dashSleepEpasKnown = true;
+        dashSleepEpasPowerMode = static_cast<uint8_t>(dashReadLeBits(frame, 16, 3));
+        dashSleepEpasSeenMs = millis();
+        if (dashSleepEpasPowerMode == 1 || dashSleepEpasPowerMode == 2)
+        {
+            dashSleepClearLockState("epas");
+            dashSleepRequestWake("epas");
+        }
+    }
+}
+
 static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
 {
     if (trigger.id != 0x389 || !apAutoRestore)
+        return;
+    if (!canWriteRuntime)
         return;
 
     unsigned long now = millis();
@@ -786,6 +1414,9 @@ static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
 
 static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
 {
+    dashSleepObserveFrame(original);
+    if (dashSleepActive)
+        return;
 #if defined(DASH_FSD_252_COMPAT) && DASH_FSD_252_COMPAT
     dashTryApAutoRestore(original, driver);
 
@@ -804,6 +1435,8 @@ static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
 
     if (dashHandler)
         dashHandler->framesSent++;
+    if (!canWriteRuntime)
+        return;
     bool ok = driver.send(modified);
     if (ok)
         lastInjectMs = millis();
@@ -853,7 +1486,8 @@ static void dashApplySpeedProfileState()
 
 static void dashApplyRuntimeState()
 {
-    forceActivateRuntime = canActive && forceActivate;
+    canWriteRuntime = canActive;
+    forceActivateRuntime = forceActivate;
     emergencyVehicleDetectionRuntime = false;
     isaSpeedChimeSuppressRuntime = false;
     enhancedAutopilotRuntime = false;
@@ -864,10 +1498,9 @@ static void dashApplyRuntimeState()
         dashHandler->checkAD = dashCheckADEnabled;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashApplySpeedProfileState();
-        if (!canActive)
+        if (!canActive || !forceActivate)
         {
             dashHandler->ADEnabled = false;
-            dashHandler->APActive = false;
         }
     }
 
@@ -886,6 +1519,7 @@ static void dashSavePrefs()
     prefs.putBool("force_act", forceActivate);
     prefs.putBool("ap_gate", apInjectionGate);
     prefs.putBool("ap_rst", apAutoRestore);
+    prefs.putBool("auto_sleep", dashAutoSleepEnabled);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putBool("eprn", dashHandler ? (bool)dashHandler->enablePrint : true);
@@ -925,14 +1559,13 @@ static void dashSavePrefs()
 
 static void dashSetCanActive(bool active, const char *reason = nullptr)
 {
-    bool changed = (canActive != active) || (forceActivate != active);
+    bool changed = canActive != active;
     canActive = active;
-    forceActivate = active;
     dashApplyRuntimeState();
     dashSavePrefs();
     if (changed)
     {
-        String msg = String("[CFG] FSD master switch ") + (active ? "ON" : "OFF");
+        String msg = String("[CFG] CAN write ") + (active ? "ON" : "OFF");
         if (reason && *reason)
             msg += String(" via ") + reason;
         dashLog(msg);
@@ -942,6 +1575,21 @@ static void dashSetCanActive(bool active, const char *reason = nullptr)
 [[maybe_unused]] static void dashToggleCanActive(const char *reason = nullptr)
 {
     dashSetCanActive(!canActive, reason);
+}
+
+static void dashSetFsdActivation(bool active, const char *reason = nullptr)
+{
+    bool changed = forceActivate != active;
+    forceActivate = active;
+    dashApplyRuntimeState();
+    dashSavePrefs();
+    if (changed)
+    {
+        String msg = String("[CFG] FSD activation ") + (active ? "ON" : "OFF");
+        if (reason && *reason)
+            msg += String(" via ") + reason;
+        dashLog(msg);
+    }
 }
 
 static bool dashApPasswordLengthValid(size_t len)
@@ -1005,6 +1653,7 @@ static void dashLoadPrefs()
 {
     prefs.begin(PREFS_NS, false);
     dashClearLegacyOptionPrefs();
+    dashSleepLoadPersistentDiag(prefs);
     bool hasStoredHw = prefs.isKey("hw");
     uint8_t storedHw = prefs.getUChar("hw", DASH_DEFAULT_HW);
     uint8_t storedDefaultHw = prefs.getUChar("hw_def", kDashUnsetU8);
@@ -1027,12 +1676,11 @@ static void dashLoadPrefs()
     if (storedDefaultHw != DASH_DEFAULT_HW)
         prefs.putUChar("hw_def", DASH_DEFAULT_HW);
     canActive = prefs.getBool("can", kDashInjectionDefaultEnabled);
-    forceActivate = canActive;
-    if (prefs.getBool("force_act", canActive) != forceActivate)
-        prefs.putBool("force_act", forceActivate);
+    forceActivate = prefs.getBool("force_act", canActive);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", false);
     apAutoRestore = prefs.getBool("ap_rst", false);
+    dashAutoSleepEnabled = prefs.getBool("auto_sleep", false);
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
     dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, prefs.getUChar("sp_sel", 1));
     hw3OffsetSlew = prefs.getBool("h3_slw", false);
@@ -1226,7 +1874,8 @@ static void dashLoadPrefs()
         dashLog("[BOOT] HW default synced to " + String(hwMode == 0 ? "LEGACY" : hwMode == 1 ? "HW3"
                                                                                              : "HW4"));
     dashLog("[BOOT] Prefs loaded HW=" + String(hwMode));
-    dashLog("[BOOT] canActive=" + String(canActive ? "YES" : "NO"));
+    dashLog("[BOOT] canWrite=" + String(canActive ? "YES" : "NO") +
+            " fsdActivation=" + String(forceActivate ? "YES" : "NO"));
 }
 
 // MCP2515-only: fine-grained filter register reload on HW mode switch.
@@ -1366,13 +2015,113 @@ static void handleStatus()
     j += ",\"force\":";
     j += forceActivate ? "true" : "false";
     j += ",\"apGate\":";
-    j += (canActive && !apGateOpen) ? "true" : "false";
+    j += (canActive && forceActivate && !apGateOpen) ? "true" : "false";
     j += ",\"apGateOpen\":";
     j += apGateOpen ? "true" : "false";
     j += ",\"apGateEnabled\":";
     j += apInjectionGate ? "true" : "false";
     j += ",\"apAutoRestore\":";
     j += apAutoRestore ? "true" : "false";
+    j += ",\"autoSleep\":";
+    j += dashAutoSleepEnabled ? "true" : "false";
+    j += ",\"sleepActive\":";
+    j += dashSleepActive ? "true" : "false";
+    j += ",\"sleepState\":\"";
+    j += dashSleepStateText();
+    j += "\",\"sleepReason\":\"";
+    j += jsonEscape(dashSleepBlockReason());
+    j += "\",\"sleepReady\":";
+    j += dashSleepParkLockReady() ? "true" : "false";
+    j += ",\"sleepGear\":";
+    j += dashSleepGearKnown ? String(dashSleepGear) : String(-1);
+    j += ",\"sleepGearAge\":";
+    j += dashSleepSignalAgeSec(dashSleepGearSeenMs);
+    j += ",\"sleepParkState\":";
+    j += dashSleepParkStateReady() ? "true" : "false";
+    j += ",\"sleepVehicleEmpty\":";
+    j += dashSleepVehicleEmptyReady() ? "true" : "false";
+    j += ",\"sleepLocked\":";
+    j += dashSleepEffectiveLocked() ? "true" : "false";
+    j += ",\"sleepLockFallback\":";
+    j += dashSleepLowPowerLockFallbackReady() ? "true" : "false";
+    j += ",\"sleepLockSource\":\"";
+    j += dashSleepEffectiveLockSource();
+    j += "\",\"sleepLockAge\":";
+    j += dashSleepSignalAgeSec(dashSleepLockLatchedMs);
+    j += ",\"sleepUiLockReq\":";
+    j += dashSleepUiLockKnown ? String(dashSleepUiLockRequest) : String(-1);
+    j += ",\"sleepUiLockAge\":";
+    j += dashSleepSignalAgeSec(dashSleepUiLockSeenMs);
+    j += ",\"sleepVcsecLock\":";
+    j += dashSleepVcsecKnown ? String(dashSleepVcsecVehicleLockStatus) : String(-1);
+    j += ",\"sleepVcsecSimple\":";
+    j += dashSleepVcsecKnown ? String(dashSleepVcsecSimpleLockStatus) : String(-1);
+    j += ",\"sleepVcsecAge\":";
+    j += dashSleepSignalAgeSec(dashSleepVcsecSeenMs);
+    j += ",\"sleepDriverPresent\":";
+    j += dashSleepDriverKnown ? (dashSleepDriverPresent ? "true" : "false") : "null";
+    j += ",\"sleepDriverAge\":";
+    j += dashSleepSignalAgeSec(dashSleepDriverSeenMs);
+    j += ",\"sleepSeatKnown\":";
+    j += dashSleepSeatKnown() ? "true" : "false";
+    j += ",\"sleepSeatOccupied\":";
+    j += dashSleepSeatOccupied() ? "true" : "false";
+    j += ",\"sleepSeatAge\":";
+    j += dashSleepSignalAgeSec(dashSleepSeatSeenMs);
+    j += ",\"sleepSeatDriver\":";
+    j += String(dashSleepSeatDriver);
+    j += ",\"sleepSeatPassenger\":";
+    j += String(dashSleepSeatPassenger);
+    j += ",\"sleepSeatRearLeft\":";
+    j += String(dashSleepSeatRearLeft);
+    j += ",\"sleepSeatRearCenter\":";
+    j += String(dashSleepSeatRearCenter);
+    j += ",\"sleepSeatRearRight\":";
+    j += String(dashSleepSeatRearRight);
+    j += ",\"sleepDiPower\":";
+    j += dashSleepDiPowerKnown ? String(dashSleepDiPowerState) : String(-1);
+    j += ",\"sleepEpasPower\":";
+    j += dashSleepEpasKnown ? String(dashSleepEpasPowerMode) : String(-1);
+    j += ",\"sleepEpasAge\":";
+    j += dashSleepSignalAgeSec(dashSleepEpasSeenMs);
+    j += ",\"sleepCountdownMs\":";
+    if (dashSleepCandidateSinceMs)
+    {
+        unsigned long elapsed = millis() - dashSleepCandidateSinceMs;
+        j += elapsed >= kDashAutoSleepDelayMs ? 0 : (kDashAutoSleepDelayMs - elapsed);
+    }
+    else
+    {
+        j += -1;
+    }
+    j += ",\"sleepCount\":";
+    j += dashSleepEnterCount;
+    j += ",\"sleepBootCount\":";
+    j += dashSleepPersistBootCount;
+    j += ",\"sleepTotalCount\":";
+    j += dashSleepPersistTotalCount;
+    j += ",\"sleepCanWakeCount\":";
+    j += dashSleepPersistCanWakeCount;
+    j += ",\"sleepRebootWakeCount\":";
+    j += dashSleepPersistRebootWakeCount;
+    j += ",\"sleepCurrentRxCount\":";
+    j += dashSleepCurrentRxCount;
+    j += ",\"sleepLastRxCount\":";
+    j += dashSleepLastRxCount;
+    j += ",\"sleepLastEnterUptime\":";
+    j += dashSleepLastEnterUptimeSec;
+    j += ",\"sleepLastWakeUptime\":";
+    j += dashSleepLastWakeUptimeSec;
+    j += ",\"sleepLastDurationSec\":";
+    j += dashSleepLastDurationSec == kDashSleepDurationUnknown ? String(-1) : String(dashSleepLastDurationSec);
+    j += ",\"sleepLastWakeSource\":\"";
+    j += jsonEscape(dashSleepLastWakeSource);
+    j += "\",\"sleepLastWakeReason\":\"";
+    j += jsonEscape(dashSleepLastWakeReason);
+    j += "\",\"sleepLastReset\":\"";
+    j += jsonEscape(dashSleepLastResetReason);
+    j += "\",\"sleepLastEndedByReboot\":";
+    j += dashSleepLastEndedByReboot ? "true" : "false";
     j += ",\"ia\":";
     j += dashInjectionActive() ? "true" : "false";
     j += ",\"lastInjectMs\":";
@@ -1441,6 +2190,10 @@ static void handleStatus()
     j += canOnline ? "true" : "false";
     j += ",\"ci\":";
     j += canActive ? "true" : "false";
+    j += ",\"canWrite\":";
+    j += canActive ? "true" : "false";
+    j += ",\"fsdEnable\":";
+    j += forceActivate ? "true" : "false";
     j += ",\"rx\":";
     j += rxCount;
     j += ",\"tx\":";
@@ -1519,23 +2272,41 @@ static void handleConfig()
                                                                     : "HW4"));
         }
     }
-    bool requestedFsdSwitch = canActive;
-    bool hasFsdSwitchArg = false;
+    bool requestedCanWrite = canActive;
+    bool hasCanWriteArg = false;
+    bool requestedFsdActivation = forceActivate;
+    bool hasFsdActivationArg = false;
+    if (server.hasArg("canWrite"))
+    {
+        requestedCanWrite = server.arg("canWrite") == "1";
+        hasCanWriteArg = true;
+    }
     if (server.hasArg("can"))
     {
-        requestedFsdSwitch = server.arg("can") == "1";
-        hasFsdSwitchArg = true;
+        requestedCanWrite = server.arg("can") == "1";
+        hasCanWriteArg = true;
+    }
+    if (server.hasArg("fsd") || server.hasArg("fsdEnable"))
+    {
+        requestedFsdActivation = server.hasArg("fsd")
+                                     ? (server.arg("fsd") == "1")
+                                     : (server.arg("fsdEnable") == "1");
+        hasFsdActivationArg = true;
     }
     if (server.hasArg("force"))
     {
-        requestedFsdSwitch = server.arg("force") == "1";
-        hasFsdSwitchArg = true;
+        requestedFsdActivation = server.arg("force") == "1";
+        hasFsdActivationArg = true;
     }
-    if (hasFsdSwitchArg && ((requestedFsdSwitch != canActive) || (requestedFsdSwitch != forceActivate)))
+    if (hasCanWriteArg && requestedCanWrite != canActive)
     {
-        canActive = requestedFsdSwitch;
-        forceActivate = requestedFsdSwitch;
-        dashLog("[CFG] FSD master switch " + String(requestedFsdSwitch ? "ON" : "OFF"));
+        canActive = requestedCanWrite;
+        dashLog("[CFG] CAN write " + String(requestedCanWrite ? "ON" : "OFF"));
+    }
+    if (hasFsdActivationArg && requestedFsdActivation != forceActivate)
+    {
+        forceActivate = requestedFsdActivation;
+        dashLog("[CFG] FSD activation " + String(requestedFsdActivation ? "ON" : "OFF"));
     }
     bool profileAutoRequested = server.hasArg("spa") && server.arg("spa") == "1";
     if (server.hasArg("sp"))
@@ -1561,6 +2332,16 @@ static void handleConfig()
         {
             apAutoRestore = v;
             dashLog("[CFG] AP/EAP auto-restore " + String(v ? "ON" : "OFF"));
+        }
+    }
+    if (server.hasArg("autoSleep"))
+    {
+        bool v = server.arg("autoSleep") == "1";
+        if (v != dashAutoSleepEnabled)
+        {
+            dashAutoSleepEnabled = v;
+            dashSleepCandidateSinceMs = 0;
+            dashLog("[CFG] Auto sleep after Park+Lock " + String(v ? "ON" : "OFF"));
         }
     }
     if (server.hasArg("hw3OffsetSlew"))
@@ -2227,6 +3008,98 @@ static void dashCheckWifi()
 // AP beacon, so we do NOT scan more often than kDashScanMinIntervalMs even if
 // the WebUI keeps polling. Cached JSON is returned for repeat calls inside the
 // window, and a 429 with retry-after is returned if the cache is empty.
+static void dashEnterLowPowerSleep()
+{
+    if (dashSleepActive)
+        return;
+    dashSleepSavedCanActive = canActive;
+    dashSleepSavedForceActivate = forceActivate;
+    canActive = false;
+    forceActivate = false;
+    dashApplyRuntimeState();
+
+    staConnected = false;
+    staConnectAttemptActive = false;
+    staRetryAt = 0;
+    dashGatewayOnStaDisconnected(WiFi.apNetif());
+    WiFi.disconnect(true, false);
+#ifdef ESP_PLATFORM
+    esp_wifi_stop();
+#endif
+    dashSleepActive = true;
+    dashSleepWakeRequested = false;
+    dashSleepWakeReason = "none";
+    dashSleepEnteredMs = millis();
+    dashSleepEnterCount++;
+    dashSleepPersistEnterDiag();
+    dashLog("[SLEEP] Enter Park+Lock low-power sleep; WiFi/AP/STA off, CAN injection off");
+}
+
+static void dashExitLowPowerSleep(const char *reason)
+{
+    if (!dashSleepActive)
+        return;
+    dashSleepPersistWakeDiag(reason);
+    dashSleepActive = false;
+    dashSleepCandidateSinceMs = 0;
+    canActive = dashSleepSavedCanActive;
+    forceActivate = dashSleepSavedForceActivate;
+    dashApplyRuntimeState();
+
+    dashStartAccessPoint(true);
+    if (strlen(staSSID) > 0)
+        dashScheduleSTAConnect(kDashStaBootDelayMs);
+    dashLog("[SLEEP] Wake from low-power sleep: " + String(reason ? reason : "unknown"));
+}
+
+static void dashSleepPoll()
+{
+    if (!dashAutoSleepEnabled)
+    {
+        dashSleepCandidateSinceMs = 0;
+        return;
+    }
+
+    if (dashSleepActive)
+    {
+        if (dashSleepWakeRequested)
+        {
+            const char *reason = dashSleepWakeReason;
+            dashSleepWakeRequested = false;
+            dashExitLowPowerSleep(reason);
+            return;
+        }
+#ifdef ESP_PLATFORM
+        esp_sleep_enable_timer_wakeup(kDashSleepLightSliceUs);
+#if defined(DRIVER_TWAI) && defined(TWAI_RX_PIN)
+        gpio_wakeup_enable(TWAI_RX_PIN, GPIO_INTR_LOW_LEVEL);
+        esp_sleep_enable_gpio_wakeup();
+#endif
+        esp_light_sleep_start();
+#if defined(DRIVER_TWAI) && defined(TWAI_RX_PIN)
+        gpio_wakeup_disable(TWAI_RX_PIN);
+#endif
+#endif
+        return;
+    }
+
+    if (!dashSleepParkLockReady())
+    {
+        dashSleepCandidateSinceMs = 0;
+        return;
+    }
+
+    unsigned long now = millis();
+    if (!dashSleepCandidateSinceMs)
+    {
+        dashSleepCandidateSinceMs = now;
+        dashLog("[SLEEP] Park+Lock detected; sleep in 10s if unchanged");
+        return;
+    }
+    if (now - dashSleepCandidateSinceMs >= kDashAutoSleepDelayMs)
+        dashEnterLowPowerSleep();
+}
+
 static String dashCachedScanJson;
 static unsigned long dashLastScanAt = 0;
 static constexpr unsigned long kDashScanMinIntervalMs = 30000;
@@ -3116,9 +3989,10 @@ static void dashSerialPrintCanStatus()
     int gtwAp = dashHandler ? (int)dashHandler->gatewayAutopilot : -1;
     Serial.println();
     Serial.println("[can_status]");
-    Serial.printf("can=%s fsd_switch=%s injection_active=%s hw=%u profile=%s/%d\n",
+    Serial.printf("can=%s can_write=%s fsd_activation=%s injection_active=%s hw=%u profile=%s/%d\n",
                   canOnline ? "online" : "offline",
                   canActive ? "ON" : "OFF",
+                  forceActivate ? "ON" : "OFF",
                   dashInjectionActive() ? "ON" : "OFF",
                   (unsigned)hwMode,
                   spAuto ? "auto" : "manual",
@@ -3347,6 +4221,7 @@ static void handleSettingsExport()
     uint8_t h3SlewRate = kHw3SlewRateDefault;
     uint8_t storedHw = hwMode;
     bool storedCan = canActive;
+    bool storedFsd = forceActivate;
     bool spAuto = dashSpeedProfileAuto;
     uint8_t spSel = dashManualSpeedProfile;
     bool h3Custom = hw3CustomSpeed;
@@ -3365,6 +4240,7 @@ static void handleSettingsExport()
     {
         storedHw = p.getUChar("hw", hwMode);
         storedCan = p.getBool("can", canActive);
+        storedFsd = p.getBool("force_act", storedCan);
         spAuto = p.getBool("sp_auto", dashSpeedProfileAuto);
         spSel = p.getUChar("sp_sel", dashManualSpeedProfile);
         eprn = p.getBool("eprn", true);
@@ -3416,6 +4292,8 @@ static void handleSettingsExport()
 
     String j = "{\"version\":\"" FIRMWARE_VERSION "\"";
     j += ",\"device\":{\"hw\":" + String(storedHw) + ",\"can\":" + String(storedCan ? "true" : "false");
+    j += ",\"canWrite\":" + String(storedCan ? "true" : "false");
+    j += ",\"fsdEnable\":" + String(storedFsd ? "true" : "false");
     j += ",\"speedProfileAuto\":" + String(spAuto ? "true" : "false") + ",\"speedProfile\":" + String(spSel);
     j += ",\"dashboardLog\":" + String(eprn ? "true" : "false") + "}";
     j += ",\"ap\":{\"ssid\":\"" + jsonEscape(apSsid) + "\",\"pass\":\"" + jsonEscape(apPass) + "\",\"hidden\":" + String(apHid ? "true" : "false") + "}";
@@ -3500,12 +4378,26 @@ static void handleSettingsImport()
             if (hw >= 0 && hw <= 2)
                 p.putUChar("hw", static_cast<uint8_t>(hw));
         }
-        if (doc["device"]["can"].is<bool>())
+        bool importedCanWrite = false;
+        bool canWriteValue = false;
+        if (doc["device"]["canWrite"].is<bool>())
         {
-            bool fsdSwitch = doc["device"]["can"].as<bool>();
-            p.putBool("can", fsdSwitch);
-            p.putBool("force_act", fsdSwitch);
+            canWriteValue = doc["device"]["canWrite"].as<bool>();
+            importedCanWrite = true;
         }
+        else if (doc["device"]["can"].is<bool>())
+        {
+            canWriteValue = doc["device"]["can"].as<bool>();
+            importedCanWrite = true;
+        }
+        if (importedCanWrite)
+        {
+            p.putBool("can", canWriteValue);
+            if (!doc["device"]["fsdEnable"].is<bool>())
+                p.putBool("force_act", canWriteValue);
+        }
+        if (doc["device"]["fsdEnable"].is<bool>())
+            p.putBool("force_act", doc["device"]["fsdEnable"].as<bool>());
         if (doc["device"]["speedProfileAuto"].is<bool>())
             p.putBool("sp_auto", doc["device"]["speedProfileAuto"].as<bool>());
         if (doc["device"]["speedProfile"].is<int>())
@@ -4173,10 +5065,17 @@ static void webTask(void *)
 {
     for (;;)
     {
-        ArduinoOTA.handle();
-        server.handleClient();
-        dashCheckWifi();
-        vTaskDelay(pdMS_TO_TICKS(10));
+        if (!dashSleepActive)
+        {
+            ArduinoOTA.handle();
+            server.handleClient();
+            dashCheckWifi();
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        else
+        {
+            vTaskDelay(pdMS_TO_TICKS(250));
+        }
     }
 }
 
@@ -4320,6 +5219,9 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 static void mcpDashboardLoop()
 {
     if (Update.isRunning())
+        return;
+    dashSleepPoll();
+    if (dashSleepActive)
         return;
     dashSerialDiagnosticsPoll();
     if (recActive && (millis() - recStartMs >= kRecMaxDurationMs))

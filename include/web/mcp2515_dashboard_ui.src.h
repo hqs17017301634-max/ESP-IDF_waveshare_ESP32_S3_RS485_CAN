@@ -379,8 +379,9 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 
 <div class="stat-grid" id="status-panel">
   <div class="stat"><div class="stat-lbl">CAN Bus</div><div class="stat-val" id="s-can">Offline</div></div>
-  <div class="stat"><div class="stat-lbl">FSD Switch</div><div class="stat-val v-dim" id="s-inj">--</div></div>
-  <div class="stat"><div class="stat-lbl" title="Frames received per second">CAN Frame Rate</div><div class="stat-val v-dim" id="s-fps">0.0 Hz</div></div>
+  <div class="stat"><div class="stat-lbl">CAN Write</div><div class="stat-val v-dim" id="s-canwrite">OFF</div></div>
+  <div class="stat"><div class="stat-lbl">FSD Activation</div><div class="stat-val v-dim" id="s-fsd">OFF</div></div>
+  <div class="stat"><div class="stat-lbl">Actual Injection</div><div class="stat-val v-dim" id="s-inj">--</div></div>
   <div class="stat"><div class="stat-lbl">RX</div><div class="stat-val v-acc" id="s-rx">0</div></div>
   <div class="stat"><div class="stat-lbl">TX</div><div class="stat-val v-acc" id="s-tx">0</div></div>
   <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
@@ -388,7 +389,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
   <div class="stat"><div class="stat-lbl">Profile</div><div class="stat-val v-dim" id="s-prof">--</div></div>
   <div class="stat"><div class="stat-lbl">Limit Offset</div><div class="stat-val v-dim" id="s-soff">0</div></div>
   <div class="stat"><div class="stat-lbl">Uptime</div><div class="stat-val v-dim" id="s-up">0s</div></div>
-  <button class="btn" id="btn-fsd-toggle" onclick="toggleFsdTopButton()">Turn FSD On</button>
+  <button class="btn" id="btn-fsd-toggle" onclick="toggleFsdTopButton()">Resume CAN Write</button>
   <button class="btn btn-reboot" onclick="reboot()">Reboot</button>
 </div>
 
@@ -492,11 +493,34 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       </div>
       <div class="setting-row">
         <div class="setting-info">
+          <div class="setting-name">CAN Bus Hijack / CAN Write</div>
+          <div class="setting-desc">Global permission for this module to transmit CAN frames. OFF keeps CAN read-only.</div>
+        </div>
+        <label class="tgl"><input type="checkbox" id="can-write-tgl" onchange="saveCanWriteSwitch()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">FSD Activation</div>
+          <div class="setting-desc">Enables Legacy/HW3/HW4 FSD activation bits. Requires CAN Write ON before frames can be sent.</div>
+        </div>
+        <label class="tgl"><input type="checkbox" id="fsd-tgl" onchange="saveFsdSwitch()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
+      </div>
+      <div class="info-box" id="fsd-status">CAN write and FSD activation are controlled separately.</div>
+      <div class="setting-row">
+        <div class="setting-info">
           <div class="setting-name">AP/EAP Auto Restore</div>
           <div class="setting-desc">Optional 0x293 Autosteer enable restore after AP/EAP ACC drop. Default off.</div>
         </div>
         <label class="tgl"><input type="checkbox" id="ap-restore-tgl" onchange="saveApRestore()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
       </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">CAN/WiFi Auto Sleep</div>
+          <div class="setting-desc">After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.</div>
+        </div>
+        <label class="tgl"><input type="checkbox" id="auto-sleep-tgl" onchange="saveAutoSleep()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
+      </div>
+      <div class="info-box" id="auto-sleep-status">Sleep diag: waiting for status</div>
     </div>
   </div>
 
@@ -973,7 +997,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
 Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-22 18:58:43 +08:00</div>
+OTA timestamp: 2026-05-28 20:45:06 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -995,7 +1019,7 @@ OTA timestamp: 2026-05-22 18:58:43 +08:00</div>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
     <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-22 18:58:43 +08:00</div>
+OTA timestamp: 2026-05-28 20:45:06 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1038,7 +1062,7 @@ const SP4=['Chill','Normal','Hurry','Max','Sloth'];
 const $=id=>document.getElementById(id);
 let dashLang=localStorage.getItem('dashLang')||((navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en');
 const I18N_ZH={
-'Light':'浅色','Dark':'深色','Waiting for CAN frames':'等待 CAN 帧','Dashboard disconnected':'仪表盘已断开','Dashboard reconnecting':'仪表盘重连中',
+'Light':'浅色','Dark':'深色','Waiting for CAN frames':'等待 CAN 帧','CAN running':'CAN 运行中','Dashboard disconnected':'仪表盘已断开','Dashboard reconnecting':'仪表盘重连中',
 'CAN Bus':'CAN 总线','Injection':'注入','Frame rate':'CAN 帧率','CAN Frame Rate':'CAN 帧率','RX Frames':'接收帧','TX Frames':'发送帧','Errors':'错误','AD Status':'AP 状态','Profile':'配置档','Offset':'偏移','Uptime':'运行时间',
 'Offline':'离线','Online':'在线','Active':'运行中','Inactive':'未激活','BLOCKED':'已阻止','Waiting AP':'等待 AP','No frames':'无帧','Sniffer paused':'嗅探暂停',
 'WiFi Hotspot':'WiFi 热点','Change the WiFi hotspot name and password':'修改 WiFi 热点名称和密码','SSID':'SSID','Password':'密码','Hidden':'隐藏','WiFi Internet':'WiFi 互联网','Not configured':'未配置','Save up to 4 networks (e.g. home + phone hotspot).':'最多保存 4 个网络（如家庭 WiFi + 手机热点）。','Add network':'添加网络','WiFi SSID':'WiFi SSID','Scan':'扫描','Save & Connect':'保存并连接','Use static IP':'使用静态 IP',
@@ -1107,6 +1131,15 @@ Object.assign(I18N_ZH,{
   // Core terminology refinements (Tesla FSD / CAN context)
   'Stop Injection':'停止 CAN 注入','Resume Injection':'恢复 CAN 注入','Stop Injecting':'停止 CAN 注入',
   'FSD Switch':'FSD 开关','Turn FSD Off':'FSD 关闭','Turn FSD On':'开启 FSD',
+  'CAN Write':'CAN 写入','FSD Activation':'FSD 激活','Actual Injection':'实际注入',
+  'CAN Bus Hijack / CAN Write':'CAN 总线劫持 / CAN 写入',
+  'Global permission for this module to transmit CAN frames. OFF keeps CAN read-only.':'此模块发送 CAN 帧的总许可。关闭后仅监听 CAN，不写入。',
+  'Enables Legacy/HW3/HW4 FSD activation bits. Requires CAN Write ON before frames can be sent.':'启用 Legacy/HW3/HW4 的 FSD 激活位。只有 CAN 写入开启后才会真正发帧。',
+  'CAN write and FSD activation are controlled separately.':'CAN 写入和 FSD 激活已拆分为两个独立开关。',
+  'Stop CAN Write':'停止 CAN 写入','Resume CAN Write':'恢复 CAN 写入',
+  'CAN Write ON':'CAN 写入开启','CAN Write OFF':'CAN 写入关闭',
+  'FSD Activation ON':'FSD 激活开启','FSD Activation OFF':'FSD 激活关闭',
+  'Gate wait':'门控等待',
   'FSD Master Switch':'FSD 总开关','Enable FSD activation':'启用 FSD 激活',
   'Turns built-in Legacy/HW3/HW4 FSD activation and CAN injection on or off together.':'同时开启或关闭内置 HW3 FSD 激活链路和 CAN 注入。',
   'ON = built-in Legacy/HW3/HW4 FSD activation and CAN injection are enabled together.':'开启 = 使用内置 Legacy/HW3/HW4 FSD 激活链路，并同时允许 CAN 注入。',
@@ -1293,7 +1326,7 @@ Object.assign(I18N_ZH,{
   '80/100/120 km/h buckets. Max target: 120/150/155 km/h.':'80/100/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-22 18:58:43 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-22 18:58:43 +08:00',
+  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-28 20:45:06 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-28 20:45:06 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -1306,7 +1339,10 @@ Object.assign(I18N_ZH,{
   'bind wait':'\u7b49\u5f85\u7ed1\u5b9a',
   'fd':'fd',
   'none':'\u65e0',
-  'whitelist override blacklist':'\u767d\u540d\u5355\u8986\u76d6\u9ed1\u540d\u5355'
+  'whitelist override blacklist':'\u767d\u540d\u5355\u8986\u76d6\u9ed1\u540d\u5355',
+  'CAN/WiFi Auto Sleep':'CAN/WiFi \u81ea\u52a8\u4f11\u7720',
+  'After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.':'P 档 + 锁车 + 车内无人稳定 10 秒后，关闭 AP/STA WiFi 和 CAN 注入；CAN RX 或座椅占用可唤醒设备。',
+  'Sleep diag: waiting for status':'\u4f11\u7720\u8bca\u65ad\uff1a\u7b49\u5f85\u72b6\u6001'
 });
 Object.assign(I18N_ZH,{
   'Upstream DNS':'\u4e0a\u6e38 DNS',
@@ -1428,7 +1464,7 @@ function injectionStatusLabel(injecting,armed,apGate,d){
     const tag=gtwAutopilotShort(d.gtwap,d.apActive);
     return (dashLang==='zh'?'运行中':'Active')+' '+tag;
   }
-  if(armed&&apGate)return dashLang==='zh'?'等待 AP':'Waiting AP';
+  if(armed&&apGate)return dashLang==='zh'?'门控等待':'Gate wait';
   return dashLang==='zh'?'已阻止':'BLOCKED';
 }
 function updateGtwBadge(v){
@@ -1439,7 +1475,7 @@ function updateGtwBadge(v){
   el.className='gtw-badge '+(known?'known':'');
   el.title=known?trText('GTW_autopilot: '+gtwAutopilotName(v)+' ('+v+')'):trText('GTW_autopilot: not seen yet');
 }
-let state={hw:1,can:true,sp:0,spAuto:true,hw3OffsetSlew:false,hw3SlewRate:25};
+let state={hw:1,can:true,fsd:true,sp:0,spAuto:true,hw3OffsetSlew:false,hw3SlewRate:25};
 let sniffPaused=false,sniffFrames=[];
 let sniffShowDbcIds=localStorage.getItem('sniffIdMode')==='dbc';
 let otaFile=null;
@@ -2077,7 +2113,7 @@ function setProfile(v){
 function updateInjectButtons(active){
   const btn=$('btn-fsd-toggle');
   if(btn){
-    btn.textContent=trText(active?'Turn FSD Off':'Turn FSD On');
+    btn.textContent=trText(active?'Stop CAN Write':'Resume CAN Write');
     btn.classList.toggle('btn-stop',!!active);
     if(!active){
       btn.style.background='var(--accBg)';
@@ -2091,30 +2127,178 @@ function updateInjectButtons(active){
   }
 }
 
+function sleepZh(){return dashLang==='zh';}
+function sleepT(en,zh){return sleepZh()?zh:en;}
+function ageText(v){
+  v=Number(v);
+  return v>=0?(v+'s '+sleepT('ago','前')):sleepT('not seen','未收到');
+}
+function fmtSleepDuration(v){
+  v=Number(v);
+  if(!Number.isFinite(v)||v<0)return sleepT('unknown','未知');
+  return fmtUp(v);
+}
+function sleepStateText(v){
+  const m={off:['off','关闭'],awake:['awake','已唤醒'],pending:['pending','倒计时'],sleep:['sleep','休眠中']};
+  const x=m[String(v||'')];return x?sleepT(x[0],x[1]):(v||'--');
+}
+function sleepReasonText(v){
+  const m={
+    'off':['off','关闭'], 'sleeping':['sleeping','休眠中'], 'ota running':['OTA running','OTA 进行中'],
+    'waiting 0x118 gear or locked fallback':['waiting gear or lock fallback','等待档位或锁车兜底'],
+    'waiting locked fallback':['waiting locked fallback','等待锁车兜底'],
+    'waiting P or park state':['waiting P or park state','等待 P 档或停车状态'],
+    'waiting park fallback':['waiting park fallback','等待停车兜底'],
+    'waiting driver empty':['waiting vehicle empty','等待车内无人'],
+    'gear not P':['gear not P','档位不是 P'],
+    'seat occupied':['seat occupied','座椅有人'],
+    'waiting lock 0x273/0x339':['waiting lock signal','等待锁车信号'], 'driver present':['driver present','驾驶员在车内'],
+    'DI drive power':['DI drive power','DI 行驶电源'], 'EPAS drive power':['EPAS drive power','EPAS 行驶电源'],
+    'pending 10s':['pending 10s','10 秒倒计时'], 'ready':['ready','已就绪']
+  };
+  const x=m[String(v||'')];return x?sleepT(x[0],x[1]):(v||'--');
+}
+function sleepWakeSourceText(v){
+  const m={none:['none','无'],CAN:['CAN wake','CAN 唤醒'],reboot:['reboot/power','重启/上电'],sleeping:['sleeping','休眠中']};
+  const x=m[String(v||'')];return x?sleepT(x[0],x[1]):(v||'--');
+}
+function sleepWakeReasonText(v){
+  const m={none:['none','无'],active:['active sleep','正在休眠'],gear:['gear wake','档位唤醒'],unlock:['unlock wake','解锁唤醒'],driver:['driver wake','驾驶员/DI 唤醒'],seat:['seat wake','座椅唤醒'],epas:['EPAS wake','EPAS 唤醒'],poweron:['power-on','上电'],external:['external reset','外部复位'],software:['software reset','软件复位'],brownout:['brownout','欠压复位'],deepsleep:['deep-sleep reset','深睡复位'],panic:['panic','异常复位'],task_wdt:['task watchdog','任务看门狗'],interrupt_wdt:['interrupt watchdog','中断看门狗'],other_wdt:['watchdog','看门狗']};
+  const x=m[String(v||'')];return x?sleepT(x[0],x[1]):(v||'--');
+}
+function sleepLockSourceText(v){
+  const m={none:['none','无'],fallback:['fallback inferred','兜底推断']};
+  const x=m[String(v||'')];return x?sleepT(x[0],x[1]):(v||'--');
+}
+function gearText(v){
+  v=Number(v);
+  return ({1:'P',2:'R',3:'N',4:'D',7:'SNA'})[v]||('raw '+v);
+}
+function uiLockText(v){
+  v=Number(v);
+  return ({0:'IDLE',1:'LOCK',2:'UNLOCK',3:'REMOTE_UNLOCK',4:'REMOTE_LOCK',7:'SNA'})[v]||('raw '+v);
+}
+function vcsecVehicleLockText(v){
+  v=Number(v);
+  return ({
+    0:'SNA',1:'NFC_UNLOCKED',2:'NFC_LOCKED',3:'SELECTIVE_UNLOCKED',
+    4:'BLE_UNLOCKED',5:'BLE_LOCKED',6:'ACTIVE_SELECTIVE_UNLOCKED',
+    7:'ACTIVE_BLE_UNLOCKED',8:'ACTIVE_BLE_LOCKED',9:'ACTIVE_UI_UNLOCKED',
+    10:'ACTIVE_UI_LOCKED',11:'REMOTE_UNLOCKED',12:'REMOTE_LOCKED',
+    13:'CRASH_UNLOCKED',14:'INTERNAL_UNLOCKED',15:'INTERNAL_LOCKED'
+  })[v]||('raw '+v);
+}
+function simpleLockText(v){
+  v=Number(v);
+  return ({0:'SNA',1:'UNLOCKED',2:'LOCKED'})[v]||('raw '+v);
+}
+function boolTriText(v){
+  if(v===null||typeof v==='undefined')return sleepT('unknown','未知');
+  return v?sleepT('YES','是'):sleepT('NO','否');
+}
+function statusLimitOffsetText(d){
+  const value=(d.hw===1&&typeof d.hw3StockOffset!=='undefined')?d.hw3StockOffset:d.soff;
+  const n=Number(value);
+  return Number.isFinite(n)?(n+' km/h'):'--';
+}
+function seatStateText(v){
+  v=Number(v);
+  if(v===1)return sleepT('occupied','有人');
+  if(v===0)return sleepT('empty','无人');
+  return sleepT('unknown','未知');
+}
+function seatAllEmpty(d){
+  return Number(d.sleepSeatDriver)===0&&Number(d.sleepSeatPassenger)===0&&Number(d.sleepSeatRearLeft)===0&&Number(d.sleepSeatRearCenter)===0&&Number(d.sleepSeatRearRight)===0;
+}
+function sleepCabinText(d,empty){
+  if(d.sleepSeatOccupied)return sleepT('occupied','有人')+' ('+sleepT('seat','座椅')+')';
+  if(d.sleepSeatKnown&&seatAllEmpty(d))return sleepT('empty','无人')+' ('+sleepT('seat','座椅')+')';
+  if(d.sleepSeatKnown)return sleepT('unknown','未知')+' ('+sleepT('partial seat','部分座椅')+')';
+  if(empty)return sleepT('empty','无人');
+  if(d.sleepDriverPresent===true)return sleepT('occupied','有人');
+  return sleepT('unknown','未知');
+}
+function sleepSeatLine(d){
+  const label=sleepT('Seats','座椅');
+  if(!d.sleepSeatKnown)return label+': '+sleepT('not seen','未收到');
+  const parts=[
+    sleepT('D','主')+': '+seatStateText(d.sleepSeatDriver),
+    sleepT('P','副')+': '+seatStateText(d.sleepSeatPassenger),
+    sleepT('RL','左后')+': '+seatStateText(d.sleepSeatRearLeft),
+    sleepT('RC','中后')+': '+seatStateText(d.sleepSeatRearCenter),
+    sleepT('RR','右后')+': '+seatStateText(d.sleepSeatRearRight)
+  ];
+  return label+': '+parts.join(' / ')+' '+sleepT('age','时间')+' '+ageText(d.sleepSeatAge);
+}
+function updateAutoSleepStatus(d){
+  const el=$('auto-sleep-status');
+  if(!el)return;
+  const locked=!!d.sleepLocked;
+  const ready=!!d.sleepReady;
+  const park=!!d.sleepParkState;
+  const empty=!!d.sleepVehicleEmpty;
+  const countdown=Number(d.sleepCountdownMs);
+  const sep=' \u2022 ';
+  const cd=countdown>=0?(sep+sleepT('sleep in ','\u4f11\u7720\u5012\u8ba1\u65f6 ')+Math.ceil(countdown/1000)+'s'):'';
+  const stateLine=sleepT('Status','\u72b6\u6001')+': '+(d.autoSleep?'ON':'OFF')+' / '+sleepStateText(d.sleepState)+sep+sleepReasonText(d.sleepReason)+cd;
+  const lockSrc=sleepLockSourceText(d.sleepLockSource);
+  const cabin=sleepCabinText(d,empty);
+  const sleepKind=d.sleepLockFallback?sleepT('park fallback sleep','\u505c\u8f66\u515c\u5e95\u4f11\u7720'):(locked?sleepT('lock-signal sleep','\u9501\u8f66\u4fe1\u53f7\u4f11\u7720'):sleepT('software sleep','\u8f6f\u4ef6\u4f11\u7720'));
+  const wakeKind=sleepWakeSourceText(d.sleepLastWakeSource)+' / '+sleepWakeReasonText(d.sleepLastWakeReason);
+  const lines=[
+    stateLine,
+    sleepT('Gear','\u6863\u4f4d')+': '+gearText(d.sleepGear)+sep+sleepT('Park','\u505c\u8f66')+': '+boolTriText(park)+sep+sleepT('Locked','\u9501\u8f66')+': '+boolTriText(locked)+' ('+lockSrc+')',
+    sleepT('Cabin','\u8f66\u5185')+': '+cabin,
+    sleepSeatLine(d),
+    sleepT('Sleep count','\u4f11\u7720\u6b21\u6570')+': '+sleepT('session','\u672c\u6b21')+' '+(d.sleepCount||0)+' / '+sleepT('total','\u7d2f\u8ba1')+' '+(d.sleepTotalCount||0),
+    sleepT('Last sleep','\u4e0a\u6b21\u4f11\u7720')+': '+fmtSleepDuration(d.sleepLastDurationSec),
+    sleepT('Wake count','\u5524\u9192\u6b21\u6570')+': CAN '+(d.sleepCanWakeCount||0)+' / '+sleepT('reboot','\u91cd\u542f')+' '+(d.sleepRebootWakeCount||0),
+    sleepT('Sleep type','\u4f11\u7720\u7c7b\u578b')+': '+sleepKind,
+    sleepT('Wake type','\u5524\u9192\u7c7b\u578b')+': '+wakeKind
+  ];
+  el.style.whiteSpace='pre-wrap';
+  el.textContent=lines.join('\n');
+  el.style.borderColor=ready?'rgba(61,186,114,.35)':locked?'rgba(245,166,35,.35)':'var(--bd)';
+}
+
 function updateFsdControl(d){
-  const enabled=!!d.ci;
-  state.can=enabled;
-  const tgl=$('fsd-tgl');if(tgl)tgl.checked=enabled;
+  const canWrite=typeof d.canWrite==='undefined'?!!d.ci:!!d.canWrite;
+  const fsdEnable=typeof d.fsdEnable==='undefined'?!!d.force:!!d.fsdEnable;
+  state.can=canWrite;
+  state.fsd=fsdEnable;
+  const canTgl=$('can-write-tgl');if(canTgl)canTgl.checked=canWrite;
+  const tgl=$('fsd-tgl');if(tgl)tgl.checked=fsdEnable;
   const apRestore=$('ap-restore-tgl');if(apRestore&&typeof d.apAutoRestore!=='undefined')apRestore.checked=!!d.apAutoRestore;
-  setText('fsd-meta',enabled?'On':'Off');
+  const autoSleep=$('auto-sleep-tgl');if(autoSleep&&typeof d.autoSleep!=='undefined')autoSleep.checked=!!d.autoSleep;
+  updateAutoSleepStatus(d);
+  setText('fsd-meta',fsdEnable?'On':'Off');
   const st=$('fsd-status');
   if(st){
-    st.textContent=enabled?
-      'Built-in FSD chain is active. Legacy/HW3/HW4 injection is controlled by this switch.':
-      'FSD chain and CAN injection are disabled and stay off after reboot.';
-    st.style.color=enabled?'var(--ok)':'var(--tx3)';
+    st.textContent=(canWrite?trText('CAN Write ON'):trText('CAN Write OFF'))+' \u2022 '+(fsdEnable?trText('FSD Activation ON'):trText('FSD Activation OFF'));
+    st.style.color=canWrite&&fsdEnable?'var(--ok)':canWrite?'var(--warn)':'var(--tx3)';
   }
+}
+async function saveCanWriteSwitch(){
+  const tgl=$('can-write-tgl'),st=$('fsd-status');
+  const enabled=tgl&&tgl.checked?'1':'0';
+  if(st){st.textContent='Saving...';st.style.color='var(--tx3)';}
+  try{
+    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'canWrite='+enabled});
+    const d=await r.json();
+    if(!d.ok)throw new Error();
+    state.can=enabled==='1';
+    poll();
+  }catch(e){if(st){st.textContent='Save failed';st.style.color='var(--err)';}}
 }
 async function saveFsdSwitch(){
   const tgl=$('fsd-tgl'),st=$('fsd-status');
   const enabled=tgl&&tgl.checked?'1':'0';
   if(st){st.textContent='Saving...';st.style.color='var(--tx3)';}
   try{
-    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'can='+enabled});
+    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'fsd='+enabled});
     const d=await r.json();
     if(!d.ok)throw new Error();
-    state.can=enabled==='1';
-    if(st){st.textContent=state.can?'Built-in FSD chain is active.':'FSD chain and CAN injection are disabled.';st.style.color=state.can?'var(--ok)':'var(--tx3)';}
+    state.fsd=enabled==='1';
     poll();
   }catch(e){if(st){st.textContent='Save failed';st.style.color='var(--err)';}}
 }
@@ -2127,6 +2311,17 @@ async function saveApRestore(){
     if(!r.ok)throw new Error('HTTP '+r.status);
   }catch(e){
     addLog('AP/EAP auto restore save failed','le');
+  }
+}
+
+async function saveAutoSleep(){
+  const t=$('auto-sleep-tgl');
+  if(!t)return;
+  try{
+    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'autoSleep='+(t.checked?'1':'0')});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+  }catch(e){
+    addLog('CAN/WiFi auto sleep save failed','le');
   }
 }
 
@@ -2288,11 +2483,11 @@ async function emergencyStop(){
     state.can=false;
     setText('s-inj','BLOCKED');
     setClass('s-inj','stat-val v-err');
-    await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'can=0'});
+    await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'canWrite=0'});
   }catch(e){}
   poll();
 }
-async function resumeInj(){try{state.can=true;updateInjectButtons(true);await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'hw='+state.hw+'&sp='+state.sp+'&spa='+(state.spAuto?'1':'0')+'&can=1'});}catch(e){}poll();}
+async function resumeInj(){try{state.can=true;updateInjectButtons(true);await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'hw='+state.hw+'&sp='+state.sp+'&spa='+(state.spAuto?'1':'0')+'&canWrite=1'});}catch(e){}poll();}
 async function toggleFsdTopButton(){if(state.can)await emergencyStop();else await resumeInj();}
 async function reboot(){if(!await dashConfirm('Reboot device?','Reboot','Reboot'))return;try{await fetch('/reboot',{method:'POST'});}catch(e){}}
 
@@ -2693,8 +2888,10 @@ async function poll(){
   return runPoll('status',async()=>{
     try{
       const d=await fetchPollJson('/status',5000,true);
-    const on=!!d.can,armed=!!d.ci,injecting=typeof d.ia==='undefined'?armed:!!d.ia,fpsVal=Number(d.fps||0);
-    state.hw=d.hw;state.sp=clampProfileForHw(d.hw,d.sp);state.spAuto=typeof d.spAuto==='undefined'?state.spAuto:!!d.spAuto;state.can=armed;
+    const on=!!d.can,canWrite=typeof d.canWrite==='undefined'?!!d.ci:!!d.canWrite,fsdEnable=typeof d.fsdEnable==='undefined'?!!d.force:!!d.fsdEnable,fsdArmed=canWrite&&fsdEnable,injecting=typeof d.ia==='undefined'?fsdArmed:!!d.ia,fpsVal=Number(d.fps||0);
+    const hdrDesc=$('hdr-desc');
+    if(hdrDesc)hdrDesc.textContent=on?(trText('CAN running')+' \u2022 '+fpsVal.toFixed(1)+' Hz'):trText('Waiting for CAN frames');
+    state.hw=d.hw;state.sp=clampProfileForHw(d.hw,d.sp);state.spAuto=typeof d.spAuto==='undefined'?state.spAuto:!!d.spAuto;state.can=canWrite;state.fsd=fsdEnable;
     updateFsdControl(d);
     updateHw3SlewControl(d);
     updateHw3SpeedControl(d);
@@ -2702,23 +2899,25 @@ async function poll(){
     setClass('dot','sdot '+(d.txerr>5?'dot-warn':on?'dot-on':'dot-off'));
     const apActive=typeof d.apActive==='undefined'?!!d.AD:!!d.apActive;
     const adEnabled=typeof d.adEnabled==='undefined'?false:!!d.adEnabled;
-    updateInjectButtons(armed);
+    updateInjectButtons(canWrite);
 
     setText('s-can',on?'Active':'Offline');
     setClass('s-can','stat-val '+(on?'v-ok':'v-err'));
-    setText('s-inj',injectionStatusLabel(injecting,armed,d.apGate,d));
-    setClass('s-inj','stat-val '+(injecting?'v-ok':(armed&&d.apGate?'v-warn':'v-err')));
+    setText('s-canwrite',canWrite?'ON':'OFF');
+    setClass('s-canwrite','stat-val '+(canWrite?'v-ok':'v-dim'));
+    setText('s-fsd',fsdEnable?'ON':'OFF');
+    setClass('s-fsd','stat-val '+(fsdEnable?'v-ok':'v-dim'));
+    setText('s-inj',injectionStatusLabel(injecting,fsdArmed,d.apGate,d));
+    setClass('s-inj','stat-val '+(injecting?'v-ok':(fsdArmed&&d.apGate?'v-warn':'v-err')));
     setText('s-AD',apActive?'Active':'Inactive');
     setClass('s-AD','stat-val '+(apActive?'v-ok':'v-dim'));
-    setText('s-fps',fpsVal.toFixed(1)+' Hz');
-    setClass('s-fps','stat-val '+(fpsVal>5?'v-acc':'v-dim'));
     setText('s-rx',d.rx);
     setText('s-tx',d.tx);
     setText('s-txerr',d.txerr);
     setClass('s-txerr','stat-val '+(d.txerr>0?'v-warn':'v-dim'));
     setText('s-fd',d.fd||'--');
     setText('s-prof',profileDisplayName(d.hw,state.sp,state.spAuto));
-    setText('s-soff',d.soff||'0');
+    setText('s-soff',statusLimitOffsetText(d));
     setText('s-up',fmtUp(d.up));
     setText('s-mcp-raw','EFLG: 0x'+toHex(d.eflg,2));
     setFill('fps-fill',Math.min(fpsVal/20*100,100));

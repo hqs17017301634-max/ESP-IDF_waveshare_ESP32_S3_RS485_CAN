@@ -161,10 +161,12 @@ struct LegacyHandler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 760 added for UI_mppSpeedLimit override (Legacy MPP custom-speed feature).
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 921, 1006};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 69, 280, 390, 627, 760, 825, 921, 929, 962, 963, 1006};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -205,6 +207,7 @@ struct LegacyHandler : public CarManagerBase
             uint16_t targetKph = dashComputeLegacyMppTargetKph(currentKph);
             if (targetKph == 0) return;               // no enabled feature covers this bucket
             if (static_cast<int>(targetKph) <= currentKph) return; // raise-only
+            if (!canWriteRuntime) return;
             int targetKphClamped = std::min<int>(targetKph, kLegacyMppMaxKph);
             uint8_t targetRaw = static_cast<uint8_t>(targetKphClamped / 5);
             if (targetRaw > kLegacyMppMaxRaw) targetRaw = kLegacyMppMaxRaw;
@@ -270,6 +273,8 @@ struct LegacyHandler : public CarManagerBase
                 // plugin rule: copy original, set bit46, optionally apply the
                 // selected driving profile, then send once.
 #else
+                if (!canWriteRuntime)
+                    return;
                 if (shouldInjectSpeedProfile())
                     setSpeedProfileV12V13(frame, speedProfile);
                 setBit(frame, 46, true);
@@ -286,6 +291,8 @@ struct LegacyHandler : public CarManagerBase
             if (index == 1 && (!checkNag || checkNag()))
             {
 #if !defined(ESP32_DASHBOARD)
+                if (!canWriteRuntime)
+                    return;
                 setBit(frame, 19, false);
                 framesSent++;
                 driver.send(frame);
@@ -317,10 +324,12 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -427,20 +436,21 @@ struct HW3Handler : public CarManagerBase
             auto index = readMuxID(frame);
             if (index == 0)
             {
+                uint8_t offsetRaw = static_cast<uint8_t>((frame.data[3] >> 1) & 0x3F);
+                speedOffset = std::max(0, std::min((static_cast<int>(offsetRaw) - 30) * 5, 100));
+                // Keep the WebUI status offset live even when FSD injection is off.
+                hw3StockOffsetKph = speedOffset;
                 const bool fsdRequested = forceActivateRuntime || isADSelectedInUI(frame);
                 ADEnabled = fsdRequested && (!checkAD || checkAD());
             }
             if (index == 0 && ADEnabled && (!checkAD || checkAD()))
             {
-                speedOffset = std::max(std::min(((uint8_t)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
-                // Mirror stock offset to a global so the mux-2 override path
-                // (and the WebUI status JSON) can read it without going
-                // through the Shared<int> wrapper.
-                hw3StockOffsetKph = speedOffset;
 #if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
                 // 2.5.2 compat sends after the handler from the saved
                 // original frame, once the AP Gate allows injection.
 #else
+                if (!canWriteRuntime)
+                    return;
                 // Built-in full activation sequence for non-compat builds.
                 setSpeedProfileV12V13(frame, speedProfile);
                 setBit(frame, 46, true);
@@ -455,6 +465,8 @@ struct HW3Handler : public CarManagerBase
 #if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
                 // 2.5.2 AD plugin did not shadow mux 1; keep bus writes minimal.
 #else
+                if (!canWriteRuntime)
+                    return;
                 // HW3 mux 1: clear nag bit ONLY. Reference RP2040CAN-FSD
                 // (field-stable on the same car this firmware targets) sends
                 // ONLY bit 19=0 on mux 1 — no bit 46. tesla-open-can-mod and
@@ -488,7 +500,7 @@ struct HW3Handler : public CarManagerBase
             // Stable FSD compatibility keeps mux 0 as bit46-only post-handler
             // injection. Restore only the HW3 custom-speed write on mux 2:
             // no readiness assist, no stock passthrough, no default cap frame.
-            if (index == 2 && (ADEnabled || forceActivateRuntime) && dashHw3CustomSpeedActive())
+            if (index == 2 && canWriteRuntime && (ADEnabled || forceActivateRuntime) && dashHw3CustomSpeedActive())
             {
                 uint8_t fl = fusedSpeedLimitRaw;
                 if (fl > 0 && fl < 31)
@@ -517,7 +529,7 @@ struct HW3Handler : public CarManagerBase
             // readiness check pass — without it the grey wheel flickers.
             // The optional Custom/Auto/HighSpeed boost overrides the offset
             // value but the *frame itself* must always be re-injected.
-            if (index == 2 && (ADEnabled || forceActivateRuntime))
+            if (index == 2 && canWriteRuntime && (ADEnabled || forceActivateRuntime))
             {
                 CanFrame shaped = frame;
                 if (dashHw3CustomSpeedActive())
@@ -630,6 +642,8 @@ struct NagHandler : public CarManagerBase
         uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
         echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
 
+        if (!canWriteRuntime)
+            return;
         framesSent++;
         nagEchoCount++;
         driver.send(echo);
@@ -658,15 +672,19 @@ struct HW4Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
 #if defined(ISA_SPEED_CHIME_SUPPRESS) && !defined(ESP32_DASHBOARD)
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 #else
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 #endif
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
@@ -724,6 +742,8 @@ struct HW4Handler : public CarManagerBase
                 sum += frame.data[i];
             sum += (921 & 0xFF) + (921 >> 8);
             frame.data[7] = sum & 0xFF;
+            if (!canWriteRuntime)
+                return;
             framesSent++;
             driver.send(frame);
             if (onSend)
@@ -799,6 +819,8 @@ struct HW4Handler : public CarManagerBase
             }
             if (index == 0 && ADEnabled && (!checkAD || checkAD()))
             {
+                if (!canWriteRuntime)
+                    return;
                 // Built-in FSD activation (ported from tesla-fsd-controller-main mod_fsd.h
                 // handleHW4 mux-0). Bit 46 = FSD activation latch, bit 60 = HW4-specific
                 // FSD enable. Done in C++ to ensure stable
@@ -816,6 +838,8 @@ struct HW4Handler : public CarManagerBase
             }
             if (index == 2 && ADEnabled && !speedProfileAuto && (!checkAD || checkAD()))
             {
+                if (!canWriteRuntime)
+                    return;
                 setSpeedProfileHW4(frame, speedProfile);
                 framesSent++;
                 driver.send(frame);
@@ -824,6 +848,8 @@ struct HW4Handler : public CarManagerBase
             }
             if (index == 1 && ADEnabled && (!checkAD || checkAD()))
             {
+                if (!canWriteRuntime)
+                    return;
                 // Nag suppression + FSD ready (ported from tesla-fsd-controller-main
                 // mod_fsd.h handleHW4 mux-1). bit 19=0 (suppress nag), bit 47=1
                 // (HW4-specific FSD ready signal — without this HW4 will NOT activate).
