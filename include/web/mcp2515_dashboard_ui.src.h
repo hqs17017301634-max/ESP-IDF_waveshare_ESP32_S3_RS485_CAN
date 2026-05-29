@@ -379,7 +379,9 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 
 <div class="stat-grid" id="status-panel">
   <div class="stat"><div class="stat-lbl">CAN Bus</div><div class="stat-val" id="s-can">Offline</div></div>
-  <div class="stat"><div class="stat-lbl">FSD Switch</div><div class="stat-val v-dim" id="s-inj">--</div></div>
+  <div class="stat"><div class="stat-lbl">CAN Write</div><div class="stat-val v-dim" id="s-canwrite">OFF</div></div>
+  <div class="stat"><div class="stat-lbl">FSD Activation</div><div class="stat-val v-dim" id="s-fsd">OFF</div></div>
+  <div class="stat"><div class="stat-lbl">Actual Injection</div><div class="stat-val v-dim" id="s-inj">--</div></div>
   <div class="stat"><div class="stat-lbl">RX</div><div class="stat-val v-acc" id="s-rx">0</div></div>
   <div class="stat"><div class="stat-lbl">TX</div><div class="stat-val v-acc" id="s-tx">0</div></div>
   <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
@@ -387,7 +389,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
   <div class="stat"><div class="stat-lbl">Profile</div><div class="stat-val v-dim" id="s-prof">--</div></div>
   <div class="stat"><div class="stat-lbl">Limit Offset</div><div class="stat-val v-dim" id="s-soff">0</div></div>
   <div class="stat"><div class="stat-lbl">Uptime</div><div class="stat-val v-dim" id="s-up">0s</div></div>
-  <button class="btn" id="btn-fsd-toggle" onclick="toggleFsdTopButton()">Turn FSD On</button>
+  <button class="btn" id="btn-fsd-toggle" onclick="toggleFsdTopButton()">Resume CAN Write</button>
   <button class="btn btn-reboot" onclick="reboot()">Reboot</button>
 </div>
 
@@ -489,6 +491,21 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
         </div>
         <div class="profile-note" id="profile-note">Available profiles depend on the selected hardware.</div>
       </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">CAN Bus Hijack / CAN Write</div>
+          <div class="setting-desc">Global permission for this module to transmit CAN frames. OFF keeps CAN read-only.</div>
+        </div>
+        <label class="tgl"><input type="checkbox" id="can-write-tgl" onchange="saveCanWriteSwitch()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">FSD Activation</div>
+          <div class="setting-desc">Enables Legacy/HW3/HW4 FSD activation bits. Requires CAN Write ON before frames can be sent.</div>
+        </div>
+        <label class="tgl"><input type="checkbox" id="fsd-tgl" onchange="saveFsdSwitch()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
+      </div>
+      <div class="info-box" id="fsd-status">CAN write and FSD activation are controlled separately.</div>
       <div class="setting-row">
         <div class="setting-info">
           <div class="setting-name">AP/EAP Auto Restore</div>
@@ -980,7 +997,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
 Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
+OTA timestamp: 2026-05-28 20:45:06 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1002,7 +1019,7 @@ OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
     <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
+OTA timestamp: 2026-05-28 20:45:06 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1114,6 +1131,15 @@ Object.assign(I18N_ZH,{
   // Core terminology refinements (Tesla FSD / CAN context)
   'Stop Injection':'停止 CAN 注入','Resume Injection':'恢复 CAN 注入','Stop Injecting':'停止 CAN 注入',
   'FSD Switch':'FSD 开关','Turn FSD Off':'FSD 关闭','Turn FSD On':'开启 FSD',
+  'CAN Write':'CAN 写入','FSD Activation':'FSD 激活','Actual Injection':'实际注入',
+  'CAN Bus Hijack / CAN Write':'CAN 总线劫持 / CAN 写入',
+  'Global permission for this module to transmit CAN frames. OFF keeps CAN read-only.':'此模块发送 CAN 帧的总许可。关闭后仅监听 CAN，不写入。',
+  'Enables Legacy/HW3/HW4 FSD activation bits. Requires CAN Write ON before frames can be sent.':'启用 Legacy/HW3/HW4 的 FSD 激活位。只有 CAN 写入开启后才会真正发帧。',
+  'CAN write and FSD activation are controlled separately.':'CAN 写入和 FSD 激活已拆分为两个独立开关。',
+  'Stop CAN Write':'停止 CAN 写入','Resume CAN Write':'恢复 CAN 写入',
+  'CAN Write ON':'CAN 写入开启','CAN Write OFF':'CAN 写入关闭',
+  'FSD Activation ON':'FSD 激活开启','FSD Activation OFF':'FSD 激活关闭',
+  'Gate wait':'门控等待',
   'FSD Master Switch':'FSD 总开关','Enable FSD activation':'启用 FSD 激活',
   'Turns built-in Legacy/HW3/HW4 FSD activation and CAN injection on or off together.':'同时开启或关闭内置 HW3 FSD 激活链路和 CAN 注入。',
   'ON = built-in Legacy/HW3/HW4 FSD activation and CAN injection are enabled together.':'开启 = 使用内置 Legacy/HW3/HW4 FSD 激活链路，并同时允许 CAN 注入。',
@@ -1300,7 +1326,7 @@ Object.assign(I18N_ZH,{
   '80/100/120 km/h buckets. Max target: 120/150/155 km/h.':'80/100/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-28 08:53:58 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-28 08:53:58 +08:00',
+  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-28 20:45:06 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-28 20:45:06 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -1438,7 +1464,7 @@ function injectionStatusLabel(injecting,armed,apGate,d){
     const tag=gtwAutopilotShort(d.gtwap,d.apActive);
     return (dashLang==='zh'?'运行中':'Active')+' '+tag;
   }
-  if(armed&&apGate)return dashLang==='zh'?'等待 AP':'Waiting AP';
+  if(armed&&apGate)return dashLang==='zh'?'门控等待':'Gate wait';
   return dashLang==='zh'?'已阻止':'BLOCKED';
 }
 function updateGtwBadge(v){
@@ -1449,7 +1475,7 @@ function updateGtwBadge(v){
   el.className='gtw-badge '+(known?'known':'');
   el.title=known?trText('GTW_autopilot: '+gtwAutopilotName(v)+' ('+v+')'):trText('GTW_autopilot: not seen yet');
 }
-let state={hw:1,can:true,sp:0,spAuto:true,hw3OffsetSlew:false,hw3SlewRate:25};
+let state={hw:1,can:true,fsd:true,sp:0,spAuto:true,hw3OffsetSlew:false,hw3SlewRate:25};
 let sniffPaused=false,sniffFrames=[];
 let sniffShowDbcIds=localStorage.getItem('sniffIdMode')==='dbc';
 let otaFile=null;
@@ -2087,7 +2113,7 @@ function setProfile(v){
 function updateInjectButtons(active){
   const btn=$('btn-fsd-toggle');
   if(btn){
-    btn.textContent=trText(active?'Turn FSD Off':'Turn FSD On');
+    btn.textContent=trText(active?'Stop CAN Write':'Resume CAN Write');
     btn.classList.toggle('btn-stop',!!active);
     if(!active){
       btn.style.background='var(--accBg)';
@@ -2236,31 +2262,43 @@ function updateAutoSleepStatus(d){
 }
 
 function updateFsdControl(d){
-  const enabled=!!d.ci;
-  state.can=enabled;
-  const tgl=$('fsd-tgl');if(tgl)tgl.checked=enabled;
+  const canWrite=typeof d.canWrite==='undefined'?!!d.ci:!!d.canWrite;
+  const fsdEnable=typeof d.fsdEnable==='undefined'?!!d.force:!!d.fsdEnable;
+  state.can=canWrite;
+  state.fsd=fsdEnable;
+  const canTgl=$('can-write-tgl');if(canTgl)canTgl.checked=canWrite;
+  const tgl=$('fsd-tgl');if(tgl)tgl.checked=fsdEnable;
   const apRestore=$('ap-restore-tgl');if(apRestore&&typeof d.apAutoRestore!=='undefined')apRestore.checked=!!d.apAutoRestore;
   const autoSleep=$('auto-sleep-tgl');if(autoSleep&&typeof d.autoSleep!=='undefined')autoSleep.checked=!!d.autoSleep;
   updateAutoSleepStatus(d);
-  setText('fsd-meta',enabled?'On':'Off');
+  setText('fsd-meta',fsdEnable?'On':'Off');
   const st=$('fsd-status');
   if(st){
-    st.textContent=enabled?
-      'Built-in FSD chain is active. Legacy/HW3/HW4 injection is controlled by this switch.':
-      'FSD chain and CAN injection are disabled and stay off after reboot.';
-    st.style.color=enabled?'var(--ok)':'var(--tx3)';
+    st.textContent=(canWrite?trText('CAN Write ON'):trText('CAN Write OFF'))+' \u2022 '+(fsdEnable?trText('FSD Activation ON'):trText('FSD Activation OFF'));
+    st.style.color=canWrite&&fsdEnable?'var(--ok)':canWrite?'var(--warn)':'var(--tx3)';
   }
+}
+async function saveCanWriteSwitch(){
+  const tgl=$('can-write-tgl'),st=$('fsd-status');
+  const enabled=tgl&&tgl.checked?'1':'0';
+  if(st){st.textContent='Saving...';st.style.color='var(--tx3)';}
+  try{
+    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'canWrite='+enabled});
+    const d=await r.json();
+    if(!d.ok)throw new Error();
+    state.can=enabled==='1';
+    poll();
+  }catch(e){if(st){st.textContent='Save failed';st.style.color='var(--err)';}}
 }
 async function saveFsdSwitch(){
   const tgl=$('fsd-tgl'),st=$('fsd-status');
   const enabled=tgl&&tgl.checked?'1':'0';
   if(st){st.textContent='Saving...';st.style.color='var(--tx3)';}
   try{
-    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'can='+enabled});
+    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'fsd='+enabled});
     const d=await r.json();
     if(!d.ok)throw new Error();
-    state.can=enabled==='1';
-    if(st){st.textContent=state.can?'Built-in FSD chain is active.':'FSD chain and CAN injection are disabled.';st.style.color=state.can?'var(--ok)':'var(--tx3)';}
+    state.fsd=enabled==='1';
     poll();
   }catch(e){if(st){st.textContent='Save failed';st.style.color='var(--err)';}}
 }
@@ -2445,11 +2483,11 @@ async function emergencyStop(){
     state.can=false;
     setText('s-inj','BLOCKED');
     setClass('s-inj','stat-val v-err');
-    await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'can=0'});
+    await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'canWrite=0'});
   }catch(e){}
   poll();
 }
-async function resumeInj(){try{state.can=true;updateInjectButtons(true);await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'hw='+state.hw+'&sp='+state.sp+'&spa='+(state.spAuto?'1':'0')+'&can=1'});}catch(e){}poll();}
+async function resumeInj(){try{state.can=true;updateInjectButtons(true);await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'hw='+state.hw+'&sp='+state.sp+'&spa='+(state.spAuto?'1':'0')+'&canWrite=1'});}catch(e){}poll();}
 async function toggleFsdTopButton(){if(state.can)await emergencyStop();else await resumeInj();}
 async function reboot(){if(!await dashConfirm('Reboot device?','Reboot','Reboot'))return;try{await fetch('/reboot',{method:'POST'});}catch(e){}}
 
@@ -2850,10 +2888,10 @@ async function poll(){
   return runPoll('status',async()=>{
     try{
       const d=await fetchPollJson('/status',5000,true);
-    const on=!!d.can,armed=!!d.ci,injecting=typeof d.ia==='undefined'?armed:!!d.ia,fpsVal=Number(d.fps||0);
+    const on=!!d.can,canWrite=typeof d.canWrite==='undefined'?!!d.ci:!!d.canWrite,fsdEnable=typeof d.fsdEnable==='undefined'?!!d.force:!!d.fsdEnable,fsdArmed=canWrite&&fsdEnable,injecting=typeof d.ia==='undefined'?fsdArmed:!!d.ia,fpsVal=Number(d.fps||0);
     const hdrDesc=$('hdr-desc');
     if(hdrDesc)hdrDesc.textContent=on?(trText('CAN running')+' \u2022 '+fpsVal.toFixed(1)+' Hz'):trText('Waiting for CAN frames');
-    state.hw=d.hw;state.sp=clampProfileForHw(d.hw,d.sp);state.spAuto=typeof d.spAuto==='undefined'?state.spAuto:!!d.spAuto;state.can=armed;
+    state.hw=d.hw;state.sp=clampProfileForHw(d.hw,d.sp);state.spAuto=typeof d.spAuto==='undefined'?state.spAuto:!!d.spAuto;state.can=canWrite;state.fsd=fsdEnable;
     updateFsdControl(d);
     updateHw3SlewControl(d);
     updateHw3SpeedControl(d);
@@ -2861,12 +2899,16 @@ async function poll(){
     setClass('dot','sdot '+(d.txerr>5?'dot-warn':on?'dot-on':'dot-off'));
     const apActive=typeof d.apActive==='undefined'?!!d.AD:!!d.apActive;
     const adEnabled=typeof d.adEnabled==='undefined'?false:!!d.adEnabled;
-    updateInjectButtons(armed);
+    updateInjectButtons(canWrite);
 
     setText('s-can',on?'Active':'Offline');
     setClass('s-can','stat-val '+(on?'v-ok':'v-err'));
-    setText('s-inj',injectionStatusLabel(injecting,armed,d.apGate,d));
-    setClass('s-inj','stat-val '+(injecting?'v-ok':(armed&&d.apGate?'v-warn':'v-err')));
+    setText('s-canwrite',canWrite?'ON':'OFF');
+    setClass('s-canwrite','stat-val '+(canWrite?'v-ok':'v-dim'));
+    setText('s-fsd',fsdEnable?'ON':'OFF');
+    setClass('s-fsd','stat-val '+(fsdEnable?'v-ok':'v-dim'));
+    setText('s-inj',injectionStatusLabel(injecting,fsdArmed,d.apGate,d));
+    setClass('s-inj','stat-val '+(injecting?'v-ok':(fsdArmed&&d.apGate?'v-warn':'v-err')));
     setText('s-AD',apActive?'Active':'Inactive');
     setClass('s-AD','stat-val '+(apActive?'v-ok':'v-dim'));
     setText('s-rx',d.rx);

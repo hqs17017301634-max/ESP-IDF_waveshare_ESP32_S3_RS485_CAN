@@ -772,10 +772,7 @@ static String jsonEscape(const String &s)
     return out;
 }
 
-static bool dashCheckADEnabled()
-{
-    return canActive;
-}
+static bool dashApInjectionAllowed();
 
 static bool dashApInjectionAllowed()
 {
@@ -783,9 +780,19 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
+static bool dashFsdInjectionActive()
+{
+    return canActive && forceActivate && dashApInjectionAllowed();
+}
+
+static bool dashCheckADEnabled()
+{
+    return forceActivate && dashApInjectionAllowed();
+}
+
 static bool dashInjectionActive()
 {
-    return canActive && dashApInjectionAllowed();
+    return dashFsdInjectionActive();
 }
 
 static bool dashApRestoreBraking()
@@ -1364,6 +1371,8 @@ static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
 {
     if (trigger.id != 0x389 || !apAutoRestore)
         return;
+    if (!canWriteRuntime)
+        return;
 
     unsigned long now = millis();
     if (!apRestoreState.dasAccDropMs ||
@@ -1426,6 +1435,8 @@ static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
 
     if (dashHandler)
         dashHandler->framesSent++;
+    if (!canWriteRuntime)
+        return;
     bool ok = driver.send(modified);
     if (ok)
         lastInjectMs = millis();
@@ -1475,7 +1486,8 @@ static void dashApplySpeedProfileState()
 
 static void dashApplyRuntimeState()
 {
-    forceActivateRuntime = canActive && forceActivate;
+    canWriteRuntime = canActive;
+    forceActivateRuntime = forceActivate;
     emergencyVehicleDetectionRuntime = false;
     isaSpeedChimeSuppressRuntime = false;
     enhancedAutopilotRuntime = false;
@@ -1486,10 +1498,9 @@ static void dashApplyRuntimeState()
         dashHandler->checkAD = dashCheckADEnabled;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashApplySpeedProfileState();
-        if (!canActive)
+        if (!canActive || !forceActivate)
         {
             dashHandler->ADEnabled = false;
-            dashHandler->APActive = false;
         }
     }
 
@@ -1548,14 +1559,13 @@ static void dashSavePrefs()
 
 static void dashSetCanActive(bool active, const char *reason = nullptr)
 {
-    bool changed = (canActive != active) || (forceActivate != active);
+    bool changed = canActive != active;
     canActive = active;
-    forceActivate = active;
     dashApplyRuntimeState();
     dashSavePrefs();
     if (changed)
     {
-        String msg = String("[CFG] FSD master switch ") + (active ? "ON" : "OFF");
+        String msg = String("[CFG] CAN write ") + (active ? "ON" : "OFF");
         if (reason && *reason)
             msg += String(" via ") + reason;
         dashLog(msg);
@@ -1565,6 +1575,21 @@ static void dashSetCanActive(bool active, const char *reason = nullptr)
 [[maybe_unused]] static void dashToggleCanActive(const char *reason = nullptr)
 {
     dashSetCanActive(!canActive, reason);
+}
+
+static void dashSetFsdActivation(bool active, const char *reason = nullptr)
+{
+    bool changed = forceActivate != active;
+    forceActivate = active;
+    dashApplyRuntimeState();
+    dashSavePrefs();
+    if (changed)
+    {
+        String msg = String("[CFG] FSD activation ") + (active ? "ON" : "OFF");
+        if (reason && *reason)
+            msg += String(" via ") + reason;
+        dashLog(msg);
+    }
 }
 
 static bool dashApPasswordLengthValid(size_t len)
@@ -1651,9 +1676,7 @@ static void dashLoadPrefs()
     if (storedDefaultHw != DASH_DEFAULT_HW)
         prefs.putUChar("hw_def", DASH_DEFAULT_HW);
     canActive = prefs.getBool("can", kDashInjectionDefaultEnabled);
-    forceActivate = canActive;
-    if (prefs.getBool("force_act", canActive) != forceActivate)
-        prefs.putBool("force_act", forceActivate);
+    forceActivate = prefs.getBool("force_act", canActive);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", false);
     apAutoRestore = prefs.getBool("ap_rst", false);
@@ -1851,7 +1874,8 @@ static void dashLoadPrefs()
         dashLog("[BOOT] HW default synced to " + String(hwMode == 0 ? "LEGACY" : hwMode == 1 ? "HW3"
                                                                                              : "HW4"));
     dashLog("[BOOT] Prefs loaded HW=" + String(hwMode));
-    dashLog("[BOOT] canActive=" + String(canActive ? "YES" : "NO"));
+    dashLog("[BOOT] canWrite=" + String(canActive ? "YES" : "NO") +
+            " fsdActivation=" + String(forceActivate ? "YES" : "NO"));
 }
 
 // MCP2515-only: fine-grained filter register reload on HW mode switch.
@@ -1991,7 +2015,7 @@ static void handleStatus()
     j += ",\"force\":";
     j += forceActivate ? "true" : "false";
     j += ",\"apGate\":";
-    j += (canActive && !apGateOpen) ? "true" : "false";
+    j += (canActive && forceActivate && !apGateOpen) ? "true" : "false";
     j += ",\"apGateOpen\":";
     j += apGateOpen ? "true" : "false";
     j += ",\"apGateEnabled\":";
@@ -2166,6 +2190,10 @@ static void handleStatus()
     j += canOnline ? "true" : "false";
     j += ",\"ci\":";
     j += canActive ? "true" : "false";
+    j += ",\"canWrite\":";
+    j += canActive ? "true" : "false";
+    j += ",\"fsdEnable\":";
+    j += forceActivate ? "true" : "false";
     j += ",\"rx\":";
     j += rxCount;
     j += ",\"tx\":";
@@ -2244,23 +2272,41 @@ static void handleConfig()
                                                                     : "HW4"));
         }
     }
-    bool requestedFsdSwitch = canActive;
-    bool hasFsdSwitchArg = false;
+    bool requestedCanWrite = canActive;
+    bool hasCanWriteArg = false;
+    bool requestedFsdActivation = forceActivate;
+    bool hasFsdActivationArg = false;
+    if (server.hasArg("canWrite"))
+    {
+        requestedCanWrite = server.arg("canWrite") == "1";
+        hasCanWriteArg = true;
+    }
     if (server.hasArg("can"))
     {
-        requestedFsdSwitch = server.arg("can") == "1";
-        hasFsdSwitchArg = true;
+        requestedCanWrite = server.arg("can") == "1";
+        hasCanWriteArg = true;
+    }
+    if (server.hasArg("fsd") || server.hasArg("fsdEnable"))
+    {
+        requestedFsdActivation = server.hasArg("fsd")
+                                     ? (server.arg("fsd") == "1")
+                                     : (server.arg("fsdEnable") == "1");
+        hasFsdActivationArg = true;
     }
     if (server.hasArg("force"))
     {
-        requestedFsdSwitch = server.arg("force") == "1";
-        hasFsdSwitchArg = true;
+        requestedFsdActivation = server.arg("force") == "1";
+        hasFsdActivationArg = true;
     }
-    if (hasFsdSwitchArg && ((requestedFsdSwitch != canActive) || (requestedFsdSwitch != forceActivate)))
+    if (hasCanWriteArg && requestedCanWrite != canActive)
     {
-        canActive = requestedFsdSwitch;
-        forceActivate = requestedFsdSwitch;
-        dashLog("[CFG] FSD master switch " + String(requestedFsdSwitch ? "ON" : "OFF"));
+        canActive = requestedCanWrite;
+        dashLog("[CFG] CAN write " + String(requestedCanWrite ? "ON" : "OFF"));
+    }
+    if (hasFsdActivationArg && requestedFsdActivation != forceActivate)
+    {
+        forceActivate = requestedFsdActivation;
+        dashLog("[CFG] FSD activation " + String(requestedFsdActivation ? "ON" : "OFF"));
     }
     bool profileAutoRequested = server.hasArg("spa") && server.arg("spa") == "1";
     if (server.hasArg("sp"))
@@ -3943,9 +3989,10 @@ static void dashSerialPrintCanStatus()
     int gtwAp = dashHandler ? (int)dashHandler->gatewayAutopilot : -1;
     Serial.println();
     Serial.println("[can_status]");
-    Serial.printf("can=%s fsd_switch=%s injection_active=%s hw=%u profile=%s/%d\n",
+    Serial.printf("can=%s can_write=%s fsd_activation=%s injection_active=%s hw=%u profile=%s/%d\n",
                   canOnline ? "online" : "offline",
                   canActive ? "ON" : "OFF",
+                  forceActivate ? "ON" : "OFF",
                   dashInjectionActive() ? "ON" : "OFF",
                   (unsigned)hwMode,
                   spAuto ? "auto" : "manual",
@@ -4174,6 +4221,7 @@ static void handleSettingsExport()
     uint8_t h3SlewRate = kHw3SlewRateDefault;
     uint8_t storedHw = hwMode;
     bool storedCan = canActive;
+    bool storedFsd = forceActivate;
     bool spAuto = dashSpeedProfileAuto;
     uint8_t spSel = dashManualSpeedProfile;
     bool h3Custom = hw3CustomSpeed;
@@ -4192,6 +4240,7 @@ static void handleSettingsExport()
     {
         storedHw = p.getUChar("hw", hwMode);
         storedCan = p.getBool("can", canActive);
+        storedFsd = p.getBool("force_act", storedCan);
         spAuto = p.getBool("sp_auto", dashSpeedProfileAuto);
         spSel = p.getUChar("sp_sel", dashManualSpeedProfile);
         eprn = p.getBool("eprn", true);
@@ -4243,6 +4292,8 @@ static void handleSettingsExport()
 
     String j = "{\"version\":\"" FIRMWARE_VERSION "\"";
     j += ",\"device\":{\"hw\":" + String(storedHw) + ",\"can\":" + String(storedCan ? "true" : "false");
+    j += ",\"canWrite\":" + String(storedCan ? "true" : "false");
+    j += ",\"fsdEnable\":" + String(storedFsd ? "true" : "false");
     j += ",\"speedProfileAuto\":" + String(spAuto ? "true" : "false") + ",\"speedProfile\":" + String(spSel);
     j += ",\"dashboardLog\":" + String(eprn ? "true" : "false") + "}";
     j += ",\"ap\":{\"ssid\":\"" + jsonEscape(apSsid) + "\",\"pass\":\"" + jsonEscape(apPass) + "\",\"hidden\":" + String(apHid ? "true" : "false") + "}";
@@ -4327,12 +4378,26 @@ static void handleSettingsImport()
             if (hw >= 0 && hw <= 2)
                 p.putUChar("hw", static_cast<uint8_t>(hw));
         }
-        if (doc["device"]["can"].is<bool>())
+        bool importedCanWrite = false;
+        bool canWriteValue = false;
+        if (doc["device"]["canWrite"].is<bool>())
         {
-            bool fsdSwitch = doc["device"]["can"].as<bool>();
-            p.putBool("can", fsdSwitch);
-            p.putBool("force_act", fsdSwitch);
+            canWriteValue = doc["device"]["canWrite"].as<bool>();
+            importedCanWrite = true;
         }
+        else if (doc["device"]["can"].is<bool>())
+        {
+            canWriteValue = doc["device"]["can"].as<bool>();
+            importedCanWrite = true;
+        }
+        if (importedCanWrite)
+        {
+            p.putBool("can", canWriteValue);
+            if (!doc["device"]["fsdEnable"].is<bool>())
+                p.putBool("force_act", canWriteValue);
+        }
+        if (doc["device"]["fsdEnable"].is<bool>())
+            p.putBool("force_act", doc["device"]["fsdEnable"].as<bool>());
         if (doc["device"]["speedProfileAuto"].is<bool>())
             p.putBool("sp_auto", doc["device"]["speedProfileAuto"].as<bool>());
         if (doc["device"]["speedProfile"].is<int>())

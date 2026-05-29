@@ -18,6 +18,8 @@ void setUp()
     mock.reset();
     handler = HW4Handler();
     handler.enablePrint = false;
+    canWriteRuntime = true;
+    forceActivateRuntime = false;
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
     enhancedAutopilotRuntime = true;

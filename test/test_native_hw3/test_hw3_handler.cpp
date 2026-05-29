@@ -13,6 +13,8 @@ void setUp()
     mock.reset();
     handler = HW3Handler();
     handler.enablePrint = false;
+    canWriteRuntime = true;
+    forceActivateRuntime = false;
     enhancedAutopilotRuntime = true;
 }
 
