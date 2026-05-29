@@ -183,6 +183,9 @@ static constexpr unsigned long kDashSleepLightSliceUs = 500000;
 static constexpr unsigned long kDashSleepLockFallbackMs = 30000;
 static constexpr unsigned long kDashSleepDriveSignalFreshMs = 30000;
 static constexpr unsigned long kDashSleepLatchedLockFreshMs = 60000;
+// How recently the module must have injected an FSD frame to count as "AP in
+// use" and block light sleep (grey-steering-wheel safeguard).
+static constexpr unsigned long kDashSleepApInjectFreshMs = 3000;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
@@ -1166,6 +1169,22 @@ static bool dashSleepDriverClearReady()
     return dashSleepVehicleEmptyReady();
 }
 
+// Safeguard A: never enter light sleep while Autopilot/FSD is actively engaged
+// or while the module is actively injecting FSD frames. Sleeping there would
+// halt CAN and make the grey steering wheel (AP/EAP available) flicker.
+// Uses dynamic in-use signals only: APActive and a recent injection. The
+// static GTW_autopilot capability value is intentionally NOT used as a gate
+// because it is permanently >=1 on AP-equipped cars and would disable sleep.
+static bool dashSleepApBusy()
+{
+    if (dashHandler && (bool)dashHandler->APActive)
+        return true;
+    if (canActive && forceActivate &&
+        dashSleepSignalFresh(lastInjectMs, kDashSleepApInjectFreshMs))
+        return true;
+    return false;
+}
+
 static const char *dashSleepBlockReason()
 {
     if (!dashAutoSleepEnabled)
@@ -1174,6 +1193,8 @@ static const char *dashSleepBlockReason()
         return "sleeping";
     if (Update.isRunning())
         return "ota running";
+    if (dashSleepApBusy())
+        return "AP active/injecting";
     if (!dashSleepParkStateReady())
     {
         if (!dashSleepGearKnown)
@@ -1197,11 +1218,15 @@ static bool dashSleepParkLockReady()
 {
     if (!dashAutoSleepEnabled || dashSleepActive || Update.isRunning())
         return false;
-    if (!dashSleepParkStateReady())
+    if (dashSleepApBusy())            // A: never sleep while AP active/injecting
         return false;
-    if (!dashSleepDriverClearReady())
+    if (!dashSleepParkStateReady())   // 2: gear == P, or low-power park fallback
         return false;
-    if (!dashSleepEffectiveLocked())
+    if (dashSleepSeatOccupied())      // cabin not empty
+        return false;
+    if (!dashSleepDriverClearReady()) // cabin empty (driver + seats)
+        return false;
+    if (!dashSleepEffectiveLocked())  // vehicle locked
         return false;
     return true;
 }
