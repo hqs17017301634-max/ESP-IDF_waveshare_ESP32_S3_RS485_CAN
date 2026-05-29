@@ -161,10 +161,12 @@ struct LegacyHandler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 760 added for UI_mppSpeedLimit override (Legacy MPP custom-speed feature).
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 921, 1006};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 69, 280, 390, 627, 760, 825, 921, 929, 962, 963, 1006};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -317,10 +319,12 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -427,16 +431,15 @@ struct HW3Handler : public CarManagerBase
             auto index = readMuxID(frame);
             if (index == 0)
             {
+                uint8_t offsetRaw = static_cast<uint8_t>((frame.data[3] >> 1) & 0x3F);
+                speedOffset = std::max(0, std::min((static_cast<int>(offsetRaw) - 30) * 5, 100));
+                // Keep the WebUI status offset live even when FSD injection is off.
+                hw3StockOffsetKph = speedOffset;
                 const bool fsdRequested = forceActivateRuntime || isADSelectedInUI(frame);
                 ADEnabled = fsdRequested && (!checkAD || checkAD());
             }
             if (index == 0 && ADEnabled && (!checkAD || checkAD()))
             {
-                speedOffset = std::max(std::min(((uint8_t)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
-                // Mirror stock offset to a global so the mux-2 override path
-                // (and the WebUI status JSON) can read it without going
-                // through the Shared<int> wrapper.
-                hw3StockOffsetKph = speedOffset;
 #if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
                 // 2.5.2 compat sends after the handler from the saved
                 // original frame, once the AP Gate allows injection.
@@ -658,15 +661,19 @@ struct HW4Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
 #if defined(ISA_SPEED_CHIME_SUPPRESS) && !defined(ESP32_DASHBOARD)
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 #else
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
+        // VCSEC, driver/power state, and seat occupancy.
+        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 12; }
 #endif
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
