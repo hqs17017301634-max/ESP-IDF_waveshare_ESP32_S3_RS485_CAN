@@ -6,6 +6,9 @@
 #pragma GCC diagnostic ignored "-Wcpp"
 #include <driver/twai.h>
 #pragma GCC diagnostic pop
+#ifdef ESP_PLATFORM
+#include <esp_timer.h>
+#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -52,23 +55,15 @@ public:
         if (count == 0)
             return;
 
-        uint32_t differ = 0;
-        for (uint8_t i = 1; i < count; i++)
-        {
-            differ |= ids[0] ^ ids[i];
-        }
-
-        uint32_t base = ids[0] & ~differ;
         twai_filter_config_t nextFilter = f_config_;
-        nextFilter.acceptance_code = base << 21;
-        nextFilter.acceptance_mask = (differ << 21) | 0x001FFFFF;
-        nextFilter.single_filter = true;
+        configureMaskFilter(nextFilter, ids, count);
 
         lock();
-        // TWAI only has a mask filter; sparse ID sets can pass false positives.
+        // TWAI only has a mask filter, so sparse ID sets can pass false positives.
         exactFilterCount_ = (count < kMaxExactFilters) ? count : kMaxExactFilters;
         for (uint8_t i = 0; i < exactFilterCount_; i++)
             exactFilterIds_[i] = ids[i];
+        diagnostics_.exactFilterCount = exactFilterCount_;
         f_config_ = nextFilter;
         stopAndUninstallLocked();
         driverOK_ = installAndStartLocked();
@@ -77,8 +72,33 @@ public:
 
     bool enableInterrupt(void (* /*onReady*/)()) override { return false; }
 
+    void setPriorityFilters(const uint32_t *ids, uint8_t count) override
+    {
+        if (count == 0)
+            return;
+
+        twai_filter_config_t nextFilter = f_config_;
+        configureMaskFilter(nextFilter, ids, count);
+
+        lock();
+        // Narrow the software whitelist to the priority set as well. TWAI's
+        // single mask filter cannot precisely reject the dropped diagnostic
+        // IDs, so without this they would still pass software filtering and
+        // reach the handler — i.e. the priority filter would be a no-op.
+        exactFilterCount_ = (count < kMaxExactFilters) ? count : kMaxExactFilters;
+        for (uint8_t i = 0; i < exactFilterCount_; i++)
+            exactFilterIds_[i] = ids[i];
+        diagnostics_.exactFilterCount = exactFilterCount_;
+        f_config_ = nextFilter;
+        stopAndUninstallLocked();
+        driverOK_ = installAndStartLocked();
+        unlock();
+    }
+
     bool read(CanFrame &frame) override
     {
+        recordLoopGap();
+        serviceAlerts();
         for (uint16_t attempt = 0; attempt < kReadDrainBudget; attempt++)
         {
             lock();
@@ -93,7 +113,7 @@ public:
             if (twai_receive(&msg, 0) != ESP_OK)
             {
                 if (isBusOff())
-                    recoverWithCooldown();
+                    recoverWithCooldownLocked();
                 unlock();
                 return false;
             }
@@ -101,7 +121,10 @@ public:
             unlock();
 
             if (!accepted)
+            {
+                diagnostics_.softwareFiltered++;
                 continue;
+            }
 
             frame.id = msg.identifier;
             frame.dlc = (msg.data_length_code <= 8) ? msg.data_length_code : 8;
@@ -115,6 +138,96 @@ public:
 
     bool send(const CanFrame &frame) override
     {
+        return sendWithPolicy(frame, false);
+    }
+
+    bool sendCritical(const CanFrame &frame) override
+    {
+        return sendWithPolicy(frame, true);
+    }
+
+    Diagnostics diagnostics() const override
+    {
+        return diagnostics_;
+    }
+
+private:
+    static constexpr uint8_t kMaxExactFilters = 32;
+    static constexpr uint16_t kReadDrainBudget = TWAI_READ_DRAIN_BUDGET;
+    static constexpr uint32_t BUSOFF_COOLDOWN_MS = 1000;
+
+    static uint8_t popcount11(uint32_t value)
+    {
+        value &= 0x7FF;
+        uint8_t count = 0;
+        while (value)
+        {
+            count += static_cast<uint8_t>(value & 1U);
+            value >>= 1;
+        }
+        return count;
+    }
+
+    void configureMaskFilter(twai_filter_config_t &filter, const uint32_t *ids, uint8_t count)
+    {
+        uint32_t differ = 0;
+        for (uint8_t i = 1; i < count; i++)
+            differ |= ids[0] ^ ids[i];
+
+        uint32_t base = ids[0] & ~differ;
+        filter.acceptance_code = base << 21;
+        filter.acceptance_mask = (differ << 21) | 0x001FFFFF;
+        filter.single_filter = true;
+        diagnostics_.hardwareAcceptedIds = 1UL << popcount11(differ);
+    }
+
+    void recordLoopGap()
+    {
+#ifdef ESP_PLATFORM
+        uint32_t now = static_cast<uint32_t>(esp_timer_get_time());
+#else
+        uint32_t now = millis() * 1000UL;
+#endif
+        if (lastReadAtUs_ != 0)
+        {
+            uint32_t gap = now - lastReadAtUs_;
+            diagnostics_.lastLoopGapUs = gap;
+            if (gap > diagnostics_.maxLoopGapUs)
+                diagnostics_.maxLoopGapUs = gap;
+        }
+        lastReadAtUs_ = now;
+    }
+
+    void serviceAlerts()
+    {
+        if (!driverInstalled_)
+            return;
+        uint32_t alerts = 0;
+        if (twai_read_alerts(&alerts, 0) != ESP_OK)
+            return;
+        if (alerts & TWAI_ALERT_RX_QUEUE_FULL)
+            diagnostics_.rxQueueFull++;
+        if (alerts & TWAI_ALERT_RX_FIFO_OVERRUN)
+            diagnostics_.rxFifoOverrun++;
+        if (alerts & TWAI_ALERT_TX_FAILED)
+            diagnostics_.txFailed++;
+        if (alerts & TWAI_ALERT_BUS_OFF)
+        {
+            diagnostics_.busOff++;
+            recoverWithCooldown();
+        }
+        if (alerts & TWAI_ALERT_BUS_RECOVERED)
+        {
+            diagnostics_.recoverCount++;
+            lock();
+            driverOK_ = twai_start() == ESP_OK;
+            unlock();
+        }
+    }
+
+    bool sendWithPolicy(const CanFrame &frame, bool critical)
+    {
+        serviceAlerts();
         lock();
         if (!driverOK_)
         {
@@ -130,25 +243,24 @@ public:
         msg.data_length_code = dlc;
         memcpy(msg.data, frame.data, dlc);
 
-        // Short timeout (2ms): modified frames should not be dropped, but
-        // long blocks (10ms) risk overflowing the 32-deep RX queue.
-        // At 500kbps, ~8 frames arrive in 2ms — queue handles this fine.
         bool ok = twai_transmit(&msg, pdMS_TO_TICKS(2)) == ESP_OK;
+        if (!ok && critical)
+        {
+            diagnostics_.txRetry++;
+            vTaskDelay(pdMS_TO_TICKS(1));
+            ok = twai_transmit(&msg, pdMS_TO_TICKS(2)) == ESP_OK;
+        }
         if (!ok)
         {
+            diagnostics_.txFailed++;
             if (isBusOff())
-                recoverWithCooldown();
+                recoverWithCooldownLocked();
         }
         unlock();
         if (onSendFrame)
             onSendFrame(frame, ok);
         return ok;
     }
-
-private:
-    static constexpr uint8_t kMaxExactFilters = 32;
-    static constexpr uint16_t kReadDrainBudget = TWAI_READ_DRAIN_BUDGET;
-    static constexpr uint32_t BUSOFF_COOLDOWN_MS = 1000;
 
     bool exactFilterMatchesLocked(uint32_t id) const
     {
@@ -179,8 +291,18 @@ private:
             return;
         lastRecovery_ = now;
 
-        stopAndUninstallLocked();
-        driverOK_ = installAndStartLocked();
+        lock();
+        initiateRecoveryLocked();
+        unlock();
+    }
+
+    void recoverWithCooldownLocked()
+    {
+        uint32_t now = millis();
+        if (now - lastRecovery_ < BUSOFF_COOLDOWN_MS)
+            return;
+        lastRecovery_ = now;
+        initiateRecoveryLocked();
     }
 
     void tryRecover()
@@ -190,8 +312,22 @@ private:
             return;
         lastRecovery_ = now;
 
+        diagnostics_.recoverCount++;
         stopAndUninstallLocked();
         driverOK_ = installAndStartLocked();
+    }
+
+    void initiateRecoveryLocked()
+    {
+        if (!driverInstalled_)
+            return;
+        diagnostics_.recoverCount++;
+        driverOK_ = false;
+        if (twai_initiate_recovery() != ESP_OK)
+        {
+            stopAndUninstallLocked();
+            driverOK_ = installAndStartLocked();
+        }
     }
 
     void lock()
@@ -214,6 +350,15 @@ private:
             return false;
         }
         driverInstalled_ = true;
+        twai_reconfigure_alerts(TWAI_ALERT_BUS_OFF |
+                                    TWAI_ALERT_BUS_RECOVERED |
+                                    TWAI_ALERT_RECOVERY_IN_PROGRESS |
+                                    TWAI_ALERT_ERR_PASS |
+                                    TWAI_ALERT_BUS_ERROR |
+                                    TWAI_ALERT_TX_FAILED |
+                                    TWAI_ALERT_RX_QUEUE_FULL |
+                                    TWAI_ALERT_RX_FIFO_OVERRUN,
+                                nullptr);
         if (twai_start() != ESP_OK)
         {
             twai_driver_uninstall();
@@ -242,6 +387,8 @@ private:
     bool driverInstalled_ = false;
     bool driverOK_ = false;
     uint32_t lastRecovery_ = 0;
+    uint32_t lastReadAtUs_ = 0;
     uint32_t exactFilterIds_[kMaxExactFilters] = {};
     uint8_t exactFilterCount_ = 0;
+    Diagnostics diagnostics_ = {};
 };

@@ -214,7 +214,7 @@ struct LegacyHandler : public CarManagerBase
             frame.data[7] = computeVehicleChecksum(frame);
             legacyMppLastSentRaw = targetRaw;
             framesSent++;
-            driver.send(frame);
+            driver.sendCritical(frame);
             if (onSend) onSend(0, true);
             return;
         }
@@ -280,7 +280,7 @@ struct LegacyHandler : public CarManagerBase
                 setBit(frame, 40, true);
                 setBit(frame, 41, true);
                 framesSent++;
-                driver.send(frame);
+                driver.sendCritical(frame);
                 if (onSend)
                     onSend(0, true);
 #endif
@@ -290,7 +290,7 @@ struct LegacyHandler : public CarManagerBase
 #if !defined(ESP32_DASHBOARD)
                 setBit(frame, 19, false);
                 framesSent++;
-                driver.send(frame);
+                driver.sendCritical(frame);
                 if (onSend)
                     onSend(1, true);
 #endif
@@ -448,7 +448,7 @@ struct HW3Handler : public CarManagerBase
                 setSpeedProfileV12V13(frame, speedProfile);
                 setBit(frame, 46, true);
                 framesSent++;
-                driver.send(frame);
+                driver.sendCritical(frame);
                 if (onSend)
                     onSend(0, true);
 #endif
@@ -481,7 +481,7 @@ struct HW3Handler : public CarManagerBase
                 if (modified)
                 {
                     framesSent++;
-                    driver.send(frame);
+                    driver.sendCritical(frame);
                     if (onSend)
                         onSend(1, true);
                 }
@@ -505,7 +505,7 @@ struct HW3Handler : public CarManagerBase
                     if (framePayloadChanged(frame, shaped))
                     {
                         framesSent++;
-                        bool ok = driver.send(shaped);
+                        bool ok = driver.sendCritical(shaped);
                         if (onSend)
                             onSend(2, ok);
                     }
@@ -544,7 +544,7 @@ struct HW3Handler : public CarManagerBase
                         hw3OffsetTargetRaw = raw;
                 }
                 framesSent++;
-                driver.send(shaped);
+                driver.sendCritical(shaped);
                 if (onSend)
                     onSend(2, true);
             }
@@ -635,7 +635,7 @@ struct NagHandler : public CarManagerBase
 
         framesSent++;
         nagEchoCount++;
-        driver.send(echo);
+        driver.sendCritical(echo);
 
         if (enablePrint && (nagEchoCount % 500 == 1))
         {
@@ -732,7 +732,7 @@ struct HW4Handler : public CarManagerBase
             sum += (921 & 0xFF) + (921 >> 8);
             frame.data[7] = sum & 0xFF;
             framesSent++;
-            driver.send(frame);
+            driver.sendCritical(frame);
             if (onSend)
                 onSend(0, true);
             return;
@@ -817,7 +817,7 @@ struct HW4Handler : public CarManagerBase
                     setBit(frame, 59, true);
 #endif
                 framesSent++;
-                driver.send(frame);
+                driver.sendCritical(frame);
                 if (onSend)
                     onSend(0, true);
             }
@@ -825,7 +825,7 @@ struct HW4Handler : public CarManagerBase
             {
                 setSpeedProfileHW4(frame, speedProfile);
                 framesSent++;
-                driver.send(frame);
+                driver.sendCritical(frame);
                 if (onSend)
                     onSend(2, true);
             }
@@ -837,7 +837,7 @@ struct HW4Handler : public CarManagerBase
                 setBit(frame, 19, false);
                 setBit(frame, 47, true);
                 framesSent++;
-                driver.send(frame);
+                driver.sendCritical(frame);
                 if (onSend)
                     onSend(1, true);
             }

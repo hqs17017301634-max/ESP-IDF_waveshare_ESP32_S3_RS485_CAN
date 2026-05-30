@@ -126,6 +126,8 @@ static bool forceActivate = false;
 static bool apInjectionGate = false;
 static bool apAutoRestore = false;
 static bool dashAutoSleepEnabled = false;
+static bool dashCanPriorityMode = true;
+static bool dashCanPriorityFilterActive = false;
 static bool dashSleepActive = false;
 static bool dashSleepWakeRequested = false;
 static const char *dashSleepWakeReason = "none";
@@ -282,6 +284,7 @@ static void dashRotateAndConnect();
 static void dashSwapHandler(uint8_t mode);
 static void dashApplyFilters();
 static void dashApplyRuntimeState();
+static void dashApplyCanFilterPolicy();
 static void dashClearLegacyOptionPrefs();
 static void dashLog(const String &s);
 
@@ -1420,7 +1423,7 @@ static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
     if (!framePayloadChanged(original, modified))
         return;
 
-    bool ok = driver.send(modified);
+    bool ok = driver.sendCritical(modified);
     apRestoreState.lastTxMs = now;
     if (ok)
         lastInjectMs = now;
@@ -1451,7 +1454,7 @@ static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
 
     if (dashHandler)
         dashHandler->framesSent++;
-    bool ok = driver.send(modified);
+    bool ok = driver.sendCritical(modified);
     if (ok)
         lastInjectMs = millis();
     if (dashHandler && dashHandler->onSend)
@@ -1534,6 +1537,7 @@ static void dashSavePrefs()
     prefs.putBool("ap_gate", apInjectionGate);
     prefs.putBool("ap_rst", apAutoRestore);
     prefs.putBool("auto_sleep", dashAutoSleepEnabled);
+    prefs.putBool("canprio", dashCanPriorityMode);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putBool("eprn", dashHandler ? (bool)dashHandler->enablePrint : true);
@@ -1584,6 +1588,9 @@ static void dashSetCanActive(bool active, const char *reason = nullptr)
         if (reason && *reason)
             msg += String(" via ") + reason;
         dashLog(msg);
+        // Re-evaluate the hardware filter: priority mode tightens the mask
+        // only when FSD writes are armed.
+        dashApplyCanFilterPolicy();
     }
 }
 
@@ -1683,6 +1690,7 @@ static void dashLoadPrefs()
     apInjectionGate = prefs.getBool("ap_gate", false);
     apAutoRestore = prefs.getBool("ap_rst", false);
     dashAutoSleepEnabled = prefs.getBool("auto_sleep", false);
+    dashCanPriorityMode = prefs.getBool("canprio", true);
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
     dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, prefs.getUChar("sp_sel", 1));
     hw3OffsetSlew = prefs.getBool("h3_slw", false);
@@ -1926,6 +1934,63 @@ static void dashApplyFilters()
 #endif
 }
 
+// CAN Priority Mode filter policy.
+// When priority mode is on AND FSD writes are armed, we narrow the hardware
+// acceptance filter to the frames the FSD loop actually needs to see in
+// real-time. Auto-sleep diagnostic IDs (EPAS power, UI lock request, VCSEC
+// lock status, driver present, seat occupancy) are dropped from the priority
+// set so the TWAI single-mask filter does not degenerate into accept-all.
+// Outside priority mode, we restore the full filter set so all features keep
+// working as before.
+static constexpr uint32_t kDashSleepDiagIds[] = {49, 627, 825, 929, 962, 963};
+
+static bool dashIsSleepDiagId(uint32_t id)
+{
+    for (uint32_t s : kDashSleepDiagIds)
+        if (s == id)
+            return true;
+    return false;
+}
+
+static void dashApplyCanFilterPolicy()
+{
+    if (!dashDriver || !dashHandler)
+        return;
+    const uint32_t *all = dashHandler->filterIds();
+    uint8_t count = dashHandler->filterIdCount();
+    if (!all || count == 0)
+        return;
+    // FSD writes armed = canActive AND forceActivate (mirrors dashInjectionActive
+    // but skipped here to avoid pulling in apGate state — the priority filter is
+    // independent of AP gate timing).
+    bool fsdArmed = canActive && forceActivate;
+    bool wantPriority = dashCanPriorityMode && fsdArmed;
+    if (wantPriority)
+    {
+        uint32_t priority[32];
+        uint8_t pc = 0;
+        for (uint8_t i = 0; i < count && pc < 32; i++)
+        {
+            if (!dashIsSleepDiagId(all[i]))
+                priority[pc++] = all[i];
+        }
+        if (pc == 0)
+        {
+            dashDriver->setFilters(all, count);
+            dashCanPriorityFilterActive = false;
+            return;
+        }
+        dashDriver->setPriorityFilters(priority, pc);
+        dashCanPriorityFilterActive = true;
+        dashLog(String("[CAN] Priority filter on (") + pc + " of " + count + " ids)");
+    }
+    else
+    {
+        dashDriver->setFilters(all, count);
+        dashCanPriorityFilterActive = false;
+    }
+}
+
 // Bus-off recovery (MCP2515 only — TWAI driver handles its own bus-off internally)
 #if defined(DRIVER_ESP32_EXT_MCP2515)
 static unsigned long lastEflgCheckMs = 0;
@@ -2025,6 +2090,25 @@ static void handleStatus()
     j += apAutoRestore ? "true" : "false";
     j += ",\"autoSleep\":";
     j += dashAutoSleepEnabled ? "true" : "false";
+    j += ",\"canprio\":";
+    j += dashCanPriorityMode ? "true" : "false";
+    j += ",\"canprioActive\":";
+    j += dashCanPriorityFilterActive ? "true" : "false";
+    if (dashDriver)
+    {
+        CanDriver::Diagnostics d = dashDriver->diagnostics();
+        j += ",\"canDiag\":{\"rxQFull\":" + String(d.rxQueueFull) +
+             ",\"rxOvr\":" + String(d.rxFifoOverrun) +
+             ",\"txFail\":" + String(d.txFailed) +
+             ",\"txRetry\":" + String(d.txRetry) +
+             ",\"busOff\":" + String(d.busOff) +
+             ",\"recCnt\":" + String(d.recoverCount) +
+             ",\"swFlt\":" + String(d.softwareFiltered) +
+             ",\"lastGapUs\":" + String(d.lastLoopGapUs) +
+             ",\"maxGapUs\":" + String(d.maxLoopGapUs) +
+             ",\"hwAcc\":" + String(d.hardwareAcceptedIds) +
+             ",\"exFlt\":" + String(d.exactFilterCount) + "}";
+    }
     j += ",\"sleepActive\":";
     j += dashSleepActive ? "true" : "false";
     j += ",\"sleepState\":\"";
@@ -2323,6 +2407,16 @@ static void handleConfig()
             dashLog("[CFG] Auto sleep after Park+Lock " + String(v ? "ON" : "OFF"));
         }
     }
+    if (server.hasArg("canprio"))
+    {
+        bool v = server.arg("canprio") == "1";
+        if (v != dashCanPriorityMode)
+        {
+            dashCanPriorityMode = v;
+            dashLog("[CFG] CAN Priority Mode " + String(v ? "ON" : "OFF"));
+            dashApplyCanFilterPolicy();
+        }
+    }
     if (server.hasArg("hw3OffsetSlew"))
     {
         bool v = server.arg("hw3OffsetSlew") == "1";
@@ -2458,6 +2552,14 @@ static void handleLoggingConfig()
 
 static void handleFrames()
 {
+    // CAN Priority Mode: sniffer is heavy (large JSON build, called on every
+    // sniffer refresh). Skip it to keep the CAN task / TWAI queue from being
+    // starved while the user is on the road.
+    if (dashCanPriorityMode)
+    {
+        server.send(200, "application/json", "{\"frames\":[],\"priorityMode\":true}");
+        return;
+    }
     String j = "{\"frames\":[";
     int start = (sniffCount < SNIFFER_CAP) ? 0 : sniffHead;
     int count = min(sniffCount, SNIFFER_CAP);
@@ -3087,6 +3189,15 @@ static void handleWifiScan()
 {
     unsigned long now = millis();
     bool force = server.hasArg("force") && server.arg("force") == "1";
+    // CAN Priority Mode: WiFi scan stops the radio for up to a few seconds,
+    // which jitters the CAN task on the shared core. Require an explicit
+    // ?force=1 from the user instead of letting the UI auto-trigger it.
+    if (dashCanPriorityMode && !force)
+    {
+        server.send(200, "application/json",
+                    "{\"networks\":[],\"priorityMode\":true,\"hint\":\"pass ?force=1 to override\"}");
+        return;
+    }
     if (!force && dashLastScanAt != 0 && (now - dashLastScanAt) < kDashScanMinIntervalMs)
     {
         if (dashCachedScanJson.length() > 0)
@@ -3554,6 +3665,14 @@ static void dashReadCpuLoad(uint8_t &core0Load, uint8_t &core1Load, bool &valid)
 
 static void handleSystemStatus()
 {
+    // CAN Priority Mode: /system_status is the heaviest endpoint (chip info +
+    // task enumeration + heap walks). Return a slim payload so the WebUI keeps
+    // working without starving the CAN task.
+    if (dashCanPriorityMode)
+    {
+        server.send(200, "application/json", "{\"priorityMode\":true}");
+        return;
+    }
 #ifdef ESP_PLATFORM
     esp_chip_info_t chip;
     esp_chip_info(&chip);
@@ -5062,11 +5181,12 @@ static void dashSwapHandler(uint8_t mode)
     appActiveHandler = next;
     dashHandler = next;
     dashApplyRuntimeState();
-    // Update driver acceptance filters for the new handler.
-    // For MCP2515 (ext) dashApplyFilters() will also fine-tune the hardware
-    // filter registers. For TWAI and old MCP2515 this abstract call is enough.
-    if (dashDriver)
-        dashDriver->setFilters(next->filterIds(), next->filterIdCount());
+    // Update driver acceptance filters for the new handler. Go through the
+    // CAN-priority policy so the TWAI single-mask filter narrows to the
+    // FSD-critical IDs when armed.
+    // For MCP2515 (ext) dashApplyFilters() additionally fine-tunes the
+    // hardware filter registers.
+    dashApplyCanFilterPolicy();
     const char *hwName = "LEGACY";
     if (mode == 1)
         hwName = "HW3";

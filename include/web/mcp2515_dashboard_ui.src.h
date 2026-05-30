@@ -498,6 +498,14 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       </div>
       <div class="setting-row">
         <div class="setting-info">
+          <div class="setting-name">CAN Priority Mode</div>
+          <div class="setting-desc">In-car real-time mode. Narrows CAN hardware filter to FSD-critical IDs only, disables sniffer/system stats/auto WiFi scan, keeps WebUI alive but throttled. ON by default.</div>
+        </div>
+        <label class="tgl"><input type="checkbox" id="can-prio-tgl" onchange="saveCanPriority()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
+      </div>
+      <div class="info-box" id="can-prio-status">Priority: waiting for status</div>
+      <div class="setting-row">
+        <div class="setting-info">
           <div class="setting-name">CAN/WiFi Auto Sleep</div>
           <div class="setting-desc">After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.</div>
         </div>
@@ -1316,7 +1324,10 @@ Object.assign(I18N_ZH,{
   'whitelist override blacklist':'\u767d\u540d\u5355\u8986\u76d6\u9ed1\u540d\u5355',
   'CAN/WiFi Auto Sleep':'CAN/WiFi \u81ea\u52a8\u4f11\u7720',
   'After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.':'P 档 + 锁车 + 车内无人稳定 10 秒后，关闭 AP/STA WiFi 和 CAN 注入；CAN RX 或座椅占用可唤醒设备。',
-  'Sleep diag: waiting for status':'\u4f11\u7720\u8bca\u65ad\uff1a\u7b49\u5f85\u72b6\u6001'
+  'Sleep diag: waiting for status':'\u4f11\u7720\u8bca\u65ad\uff1a\u7b49\u5f85\u72b6\u6001',
+  'CAN Priority Mode':'CAN \u4f18\u5148\u6a21\u5f0f',
+  'In-car real-time mode. Narrows CAN hardware filter to FSD-critical IDs only, disables sniffer/system stats/auto WiFi scan, keeps WebUI alive but throttled. ON by default.':'\u5b9e\u8f66\u5b9e\u65f6\u6a21\u5f0f\uff1a\u786c\u4ef6\u8fc7\u6ee4\u53ea\u4fdd\u7559 FSD \u5173\u952e\u5e27\uff0c\u5173\u95ed\u62a5\u6587\u62ff\u5305 / \u7cfb\u7edf\u8bca\u65ad / WiFi \u81ea\u52a8\u626b\u63cf\uff0cWebUI \u4ecd\u53ef\u7528\u4f46\u88ab\u9650\u901f\u3002\u9ed8\u8ba4\u5f00\u542f\u3002',
+  'Priority: waiting for status':'\u4f18\u5148\u6a21\u5f0f\uff1a\u7b49\u5f85\u72b6\u6001'
 });
 Object.assign(I18N_ZH,{
   'Upstream DNS':'\u4e0a\u6e38 DNS',
@@ -2287,6 +2298,39 @@ async function saveAutoSleep(){
   }
 }
 
+async function saveCanPriority(){
+  const t=$('can-prio-tgl');
+  if(!t)return;
+  try{
+    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'canprio='+(t.checked?'1':'0')});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+  }catch(e){
+    addLog('CAN Priority Mode save failed','le');
+  }
+}
+
+function updateCanPriorityStatus(d){
+  const tgl=$('can-prio-tgl');
+  if(tgl&&typeof d.canprio!=='undefined')tgl.checked=!!d.canprio;
+  const box=$('can-prio-status');
+  if(!box)return;
+  const on=!!d.canprio,filt=!!d.canprioActive;
+  const diag=d.canDiag||{};
+  const parts=[];
+  parts.push('Mode: '+(on?'ON':'OFF'));
+  parts.push('HW filter: '+(filt?'priority':'full')+' ('+(diag.exFlt||0)+' ids)');
+  if(typeof diag.maxGapUs!=='undefined')parts.push('Max loop gap: '+diag.maxGapUs+' us');
+  if(typeof diag.lastGapUs!=='undefined')parts.push('Last gap: '+diag.lastGapUs+' us');
+  if(diag.rxQFull)parts.push('RX queue full: '+diag.rxQFull);
+  if(diag.rxOvr)parts.push('RX overrun: '+diag.rxOvr);
+  if(diag.txFail)parts.push('TX failed: '+diag.txFail);
+  if(diag.txRetry)parts.push('TX retry: '+diag.txRetry);
+  if(diag.busOff)parts.push('Bus-off: '+diag.busOff);
+  if(diag.recCnt)parts.push('Recovers: '+diag.recCnt);
+  box.textContent=parts.join(' • ');
+  box.style.color=on?'var(--ok)':'var(--tx3)';
+}
+
 function sniffBusPrefix(){return state.hw===0?0x0800:0x1000;}
 function sniffBusLabel(){return state.hw===0?'PARTY':'CH';}
 function sniffWireId(id){return id&0x7FF;}
@@ -2855,6 +2899,7 @@ async function poll(){
     if(hdrDesc)hdrDesc.textContent=on?(trText('CAN running')+' \u2022 '+fpsVal.toFixed(1)+' Hz'):trText('Waiting for CAN frames');
     state.hw=d.hw;state.sp=clampProfileForHw(d.hw,d.sp);state.spAuto=typeof d.spAuto==='undefined'?state.spAuto:!!d.spAuto;state.can=armed;
     updateFsdControl(d);
+    updateCanPriorityStatus(d);
     updateHw3SlewControl(d);
     updateHw3SpeedControl(d);
     updateLegacyMppControl(d);
