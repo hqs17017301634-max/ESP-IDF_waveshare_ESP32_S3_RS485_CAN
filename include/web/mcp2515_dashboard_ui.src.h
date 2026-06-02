@@ -539,14 +539,15 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       <div class="setting-row">
         <div class="setting-info">
           <div class="setting-name">High-speed boost (&gt;=80 km/h)</div>
-          <div class="setting-desc">80/100/120 km/h buckets. Max +50% target: 120/150/180 km/h.</div>
+          <div class="setting-desc">80/100/110/120 km/h buckets. Max +50% target: 120/150/165/180 km/h.</div>
         </div>
         <label class="tgl"><input type="checkbox" id="hw3-hs-tgl" onchange="saveHw3Speed()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
         <div class="stat" style="padding:6px"><div class="stat-lbl">80-></div><input class="sniff-input" id="hw3-hs-0" type="number" min="0" max="120" value="90" onchange="saveHw3Speed()" style="width:100%;text-align:right"></div>
         <div class="stat" style="padding:6px"><div class="stat-lbl">100-></div><input class="sniff-input" id="hw3-hs-1" type="number" min="0" max="150" value="110" onchange="saveHw3Speed()" style="width:100%;text-align:right"></div>
-        <div class="stat" style="padding:6px"><div class="stat-lbl">120-></div><input class="sniff-input" id="hw3-hs-2" type="number" min="0" max="180" value="130" onchange="saveHw3Speed()" style="width:100%;text-align:right"></div>
+        <div class="stat" style="padding:6px"><div class="stat-lbl">110-></div><input class="sniff-input" id="hw3-hs-2" type="number" min="0" max="165" value="120" onchange="saveHw3Speed()" style="width:100%;text-align:right"></div>
+        <div class="stat" style="padding:6px"><div class="stat-lbl">120-></div><input class="sniff-input" id="hw3-hs-3" type="number" min="0" max="180" value="130" onchange="saveHw3Speed()" style="width:100%;text-align:right"></div>
       </div>
       <div class="setting-row">
         <div class="setting-info">
@@ -601,14 +602,15 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       <div class="setting-row">
         <div class="setting-info">
           <div class="setting-name">High-speed boost (&gt;=80 km/h)</div>
-          <div class="setting-desc">80/100/120 km/h buckets. Max target: 120/150/155 km/h.</div>
+          <div class="setting-desc">80/100/110/120 km/h buckets. Max target: 120/150/155/155 km/h.</div>
         </div>
         <label class="tgl"><input type="checkbox" id="legacy-mpp-hs-tgl" onchange="saveLegacyMpp()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
         <div class="stat" style="padding:6px"><div class="stat-lbl">80-></div><input class="sniff-input" id="legacy-mpp-hs-0" type="number" min="0" max="120" value="90" onchange="saveLegacyMpp()" style="width:100%;text-align:right"></div>
         <div class="stat" style="padding:6px"><div class="stat-lbl">100-></div><input class="sniff-input" id="legacy-mpp-hs-1" type="number" min="0" max="150" value="110" onchange="saveLegacyMpp()" style="width:100%;text-align:right"></div>
-        <div class="stat" style="padding:6px"><div class="stat-lbl">120-></div><input class="sniff-input" id="legacy-mpp-hs-2" type="number" min="0" max="155" value="130" onchange="saveLegacyMpp()" style="width:100%;text-align:right"></div>
+        <div class="stat" style="padding:6px"><div class="stat-lbl">110-></div><input class="sniff-input" id="legacy-mpp-hs-2" type="number" min="0" max="155" value="120" onchange="saveLegacyMpp()" style="width:100%;text-align:right"></div>
+        <div class="stat" style="padding:6px"><div class="stat-lbl">120-></div><input class="sniff-input" id="legacy-mpp-hs-3" type="number" min="0" max="155" value="130" onchange="saveLegacyMpp()" style="width:100%;text-align:right"></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:10px">
         <div class="stat" style="padding:8px"><div class="stat-lbl">Bus raw</div><div class="stat-val" id="legacy-mpp-bus-raw">0</div></div>
@@ -988,7 +990,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
 Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
+OTA timestamp: 2026-06-01 09:48:16 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1010,7 +1012,7 @@ OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
     <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.5
-OTA timestamp: 2026-05-28 08:53:58 +08:00</div>
+OTA timestamp: 2026-06-01 09:48:16 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1178,7 +1180,7 @@ Object.assign(I18N_ZH,{
   'Custom table':'自定义分段表',
   '30/40/50/60/70 km/h buckets':'30/40/50/60/70 km/h 分段',
   'High-speed boost (>=80 km/h)':'??????>=80 km/h?',
-  '80/100/120 km/h target speeds':'80/100/120 km/h 目标速度',
+  '80/100/110/120 km/h target speeds':'80/100/110/120 km/h 目标速度',
   'Wire encoding':'报文编码',
   'PCT4=current, KPH5=legacy fleets':'PCT4=当前编码，KPH5=旧版车队',
   'Fused':'融合限速','Stock off':'原车限速偏移','Stock limit offset':'原车限速偏移','Tgt raw':'写入 raw','Write raw':'写入 raw',
@@ -1291,7 +1293,7 @@ Object.assign(I18N_ZH,{
 // Final Chinese overrides for recently changed WebUI labels.
 Object.assign(I18N_ZH,{
   'High-speed boost (>=80 km/h)':'\u9ad8\u901f\u5206\u6bb5\u63d0\u901f\uff08>=80 km/h\uff09',
-  '80/100/120 km/h buckets. Max +50% target: 120/150/180 km/h.':'80/100/120 km/h \u5206\u6bb5\u3002\u6700\u5927\u63d0\u901f 50%\uff0c\u76ee\u6807\u4e0a\u9650\uff1a120/150/180 km/h\u3002',
+  '80/100/110/120 km/h buckets. Max +50% target: 120/150/165/180 km/h.':'80/100/110/120 km/h \u5206\u6bb5\u3002\u6700\u5927\u63d0\u901f 50%\uff0c\u76ee\u6807\u4e0a\u9650\uff1a120/150/165/180 km/h\u3002',
   '30/40/50/60/70 km/h buckets. Max +50% target: 45/60/75/90/105 km/h.':'30/40/50/60/70 km/h \u5206\u6bb5\u3002\u6700\u5927\u63d0\u901f 50%\uff0c\u76ee\u6807\u4e0a\u9650\uff1a45/60/75/90/105 km/h\u3002',
   'Default 25%/s, max 25%/s':'\u9ed8\u8ba4 25%/\u79d2\uff0c\u6700\u9ad8 25%/\u79d2',
   'Use 1-25, max 25':'\u8bf7\u8f93\u5165 1-25\uff0c\u6700\u9ad8 25',
@@ -1305,10 +1307,10 @@ Object.assign(I18N_ZH,{
   'Save CAN pins':'\u4fdd\u5b58 CAN \u5f15\u811a',
   'Restored. Reboot required.':'\u5df2\u8fd8\u539f\uff0c\u9700\u8981\u91cd\u542f\u3002',
   'Raise UI_mppSpeedLimit on CAN 760 byte 6 to a target km/h based on what the gateway is currently sending. Same bucket layout as HW3. Only writes when target is higher than current - never lowers.':'\u6839\u636e\u7f51\u5173\u5f53\u524d\u53d1\u9001\u7684 UI_mppSpeedLimit (CAN 760 byte 6) \u6309\u5206\u6bb5\u8868\u5f97\u5230\u76ee\u6807 km/h\uff0c\u4ec5\u5728\u76ee\u6807\u503c\u9ad8\u4e8e\u5f53\u524d\u503c\u65f6\u5199\u56de\uff0c\u4ece\u4e0d\u964d\u4f4e\u3002\u5206\u6bb5\u5e03\u5c40\u4e0e HW3 \u4e00\u81f4\u3002',
-  '80/100/120 km/h buckets. Max target: 120/150/155 km/h.':'80/100/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155 km/h\u3002',
+  '80/100/110/120 km/h buckets. Max target: 120/150/155/155 km/h.':'80/100/110/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-05-28 08:53:58 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-05-28 08:53:58 +08:00',
+  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-06-01 09:48:16 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-06-01 09:48:16 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -2384,7 +2386,7 @@ async function saveHw3Slew(){
 }
 
 const hw3CustomMax=[45,60,75,90,105];
-const hw3HighMax=[120,150,180];
+const hw3HighMax=[120,150,165,180];
 function clampToSlot(v,max){v=parseInt(v,10);return isNaN(v)?0:Math.max(0,Math.min(max,v));}
 function updateHw3EncodingButtons(enc){
   document.querySelectorAll('.hw3-enc-btn').forEach(btn=>{
@@ -2409,7 +2411,7 @@ function updateHw3SpeedControl(d){
   const ct=Array.isArray(d.hw3CustomTarget)?d.hw3CustomTarget:[];
   for(let i=0;i<5;i++){const el=$('hw3-ct-'+i);if(el&&document.activeElement!==el&&ct[i]!==undefined)el.value=clampToSlot(ct[i],hw3CustomMax[i]);}
   const hs=Array.isArray(d.hw3HighSpeedTarget)?d.hw3HighSpeedTarget:[];
-  for(let i=0;i<3;i++){const el=$('hw3-hs-'+i);if(el&&document.activeElement!==el&&hs[i]!==undefined)el.value=clampToSlot(hs[i],hw3HighMax[i]);}
+  for(let i=0;i<hw3HighMax.length;i++){const el=$('hw3-hs-'+i);if(el&&document.activeElement!==el&&hs[i]!==undefined)el.value=clampToSlot(hs[i],hw3HighMax[i]);}
   const flags=[];
   if(cust)flags.push('Custom');
   if(hse)flags.push('HighSpd');
@@ -2427,7 +2429,7 @@ async function saveHw3Speed(){
   const enc=$('hw3-enc').value==='0'?'0':'1';
   const parts=['hw3CustomSpeed='+cust,'hw3HighSpeedEnable='+hse,'hw3WireEncoding='+enc];
   for(let i=0;i<5;i++){const el=$('hw3-ct-'+i),v=clampToSlot(el.value,hw3CustomMax[i]);el.value=v;parts.push('hw3CustomT'+i+'='+v);}
-  for(let i=0;i<3;i++){const el=$('hw3-hs-'+i),v=clampToSlot(el.value,hw3HighMax[i]);el.value=v;parts.push('hw3HighTarget'+i+'='+v);}
+  for(let i=0;i<hw3HighMax.length;i++){const el=$('hw3-hs-'+i);if(!el)continue;const v=clampToSlot(el.value,hw3HighMax[i]);el.value=v;parts.push('hw3HighTarget'+i+'='+v);}
   st.textContent='Saving...';st.style.color='var(--tx3)';
   try{
     const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:parts.join('&')});
@@ -2448,7 +2450,7 @@ function updateLegacyMppControl(d){
   const cArr=Array.isArray(d.legacyMppCustomTarget)?d.legacyMppCustomTarget:[];
   for(let i=0;i<5;i++){const el=$('legacy-mpp-ct-'+i);if(el&&document.activeElement!==el&&cArr[i]!==undefined)el.value=cArr[i];}
   const hArr=Array.isArray(d.legacyMppHighSpeedTarget)?d.legacyMppHighSpeedTarget:[];
-  for(let i=0;i<3;i++){const el=$('legacy-mpp-hs-'+i);if(el&&document.activeElement!==el&&hArr[i]!==undefined)el.value=hArr[i];}
+  for(let i=0;i<legacyHighMax.length;i++){const el=$('legacy-mpp-hs-'+i);if(el&&document.activeElement!==el&&hArr[i]!==undefined)el.value=Math.max(0,Math.min(legacyHighMax[i],parseInt(hArr[i],10)||0));}
   setText('legacy-mpp-bus-raw',(d.legacyMppLastRaw!==undefined?d.legacyMppLastRaw:0)+(d.legacyMppLastRaw?' ('+(d.legacyMppLastRaw*5)+' km/h)':''));
   setText('legacy-mpp-sent-raw',(d.legacyMppLastSentRaw!==undefined?d.legacyMppLastSentRaw:0)+(d.legacyMppLastSentRaw?' ('+(d.legacyMppLastSentRaw*5)+' km/h)':''));
   const flags=[];
@@ -2458,7 +2460,7 @@ function updateLegacyMppControl(d){
   setText('legacy-mpp-meta',flags.length?flags.join(' \u2022 '):'Off');
 }
 const legacyCustomMax=[45,60,75,90,105];
-const legacyHighMax=[120,150,155];
+const legacyHighMax=[120,150,155,155];
 async function saveLegacyMpp(){
   const st=$('legacy-mpp-status');
   const en=$('legacy-mpp-tgl').checked?'1':'0';
@@ -2466,7 +2468,7 @@ async function saveLegacyMpp(){
   const hse=$('legacy-mpp-hs-tgl').checked?'1':'0';
   const parts=['legacyMppOverride='+en,'legacyMppCustomEnable='+cust,'legacyMppHighSpeedEnable='+hse];
   for(let i=0;i<5;i++){const v=parseInt($('legacy-mpp-ct-'+i).value,10);if(!isNaN(v))parts.push('legacyMppCustomT'+i+'='+Math.max(0,Math.min(legacyCustomMax[i],v)));}
-  for(let i=0;i<3;i++){const v=parseInt($('legacy-mpp-hs-'+i).value,10);if(!isNaN(v))parts.push('legacyMppHighTarget'+i+'='+Math.max(0,Math.min(legacyHighMax[i],v)));}
+  for(let i=0;i<legacyHighMax.length;i++){const el=$('legacy-mpp-hs-'+i);if(!el)continue;const v=parseInt(el.value,10);if(!isNaN(v)){const c=Math.max(0,Math.min(legacyHighMax[i],v));el.value=c;parts.push('legacyMppHighTarget'+i+'='+c);}}
   st.textContent='Saving...';st.style.color='var(--tx3)';
   try{
     const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:parts.join('&')});

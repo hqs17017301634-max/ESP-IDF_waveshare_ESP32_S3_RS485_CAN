@@ -9,7 +9,7 @@
 //
 // Bucket layout matches HW3 for UX consistency:
 //   Custom table (low-speed):  30 / 40 / 50 / 60 / 70 km/h  → user target km/h
-//   High-speed table:          80 / 100 / 120 km/h          → user target km/h
+//   High-speed table:          80 / 100 / 110 / 120 km/h          → user target km/h
 //   Cutover at 80 km/h same as HW3.
 //
 // UI_mppSpeedLimit raw is 5-bit, so max km/h = 31 × 5 = 155 km/h. Values
@@ -22,23 +22,22 @@
 inline constexpr uint8_t kLegacyMppCustomBucketBaseKph = 30;
 inline constexpr uint8_t kLegacyMppCustomBucketStepKph = 10;
 inline constexpr uint8_t kLegacyMppCustomTargetCount = 5; // 30/40/50/60/70
-inline constexpr uint8_t kLegacyMppHighSpeedBucketBaseKph = 80;
-inline constexpr uint8_t kLegacyMppHighSpeedBucketStepKph = 20;
-inline constexpr uint8_t kLegacyMppHighSpeedBucketCount = 3; // 80/100/120
+inline constexpr uint8_t kLegacyMppHighSpeedBucketCount = 4; // 80/100/110/120
+inline constexpr uint8_t kLegacyMppHighSpeedBucketKph[kLegacyMppHighSpeedBucketCount] = {80, 100, 110, 120};
 inline constexpr uint8_t kLegacyMppCutoverKph = 80;
 inline constexpr uint8_t kLegacyMppMaxRaw = 31;          // 5-bit field
 inline constexpr uint8_t kLegacyMppMaxKph = 155;         // 31 × 5
 inline constexpr uint8_t kLegacyMppCustomTargetMaxByBucket[kLegacyMppCustomTargetCount] = {45, 60, 75, 90, 105};
 // Legacy UI_mppSpeedLimit is 5-bit, so the 120 km/h bucket cannot reach the
 // HW3 UI cap of 180 km/h. Clamp that bucket to the wire maximum, 155 km/h.
-inline constexpr uint8_t kLegacyMppHighSpeedTargetMaxByBucket[kLegacyMppHighSpeedBucketCount] = {120, 150, 155};
+inline constexpr uint8_t kLegacyMppHighSpeedTargetMaxByBucket[kLegacyMppHighSpeedBucketCount] = {120, 150, 155, 155};
 
 // Master toggle plus per-feature toggles (mirrors HW3 layout).
 inline bool legacyMppOverride = false;
 inline bool legacyMppCustomEnable = false;
 inline uint8_t legacyMppCustomTarget[kLegacyMppCustomTargetCount] = {45, 60, 75, 90, 105};
 inline bool legacyMppHighSpeedEnable = false;
-inline uint8_t legacyMppHighSpeedTarget[kLegacyMppHighSpeedBucketCount] = {90, 110, 130};
+inline uint8_t legacyMppHighSpeedTarget[kLegacyMppHighSpeedBucketCount] = {90, 110, 120, 130};
 
 // Diagnostic mirrors (read by /status JSON for UI display).
 inline uint8_t legacyMppLastRaw = 0;       // last seen raw_mpp from bus
@@ -71,6 +70,17 @@ inline uint8_t dashClampLegacyMppHighSpeedTargetForBucket(uint8_t idx, int v)
     return static_cast<uint8_t>(v);
 }
 
+inline uint8_t dashLegacyMppHighSpeedBucketIndex(int currentKph)
+{
+    uint8_t idx = 0;
+    for (uint8_t i = 1; i < kLegacyMppHighSpeedBucketCount; i++)
+    {
+        if (currentKph >= kLegacyMppHighSpeedBucketKph[i])
+            idx = i;
+    }
+    return idx;
+}
+
 inline bool dashLegacyMppActive()
 {
     return legacyMppOverride && (legacyMppCustomEnable || legacyMppHighSpeedEnable);
@@ -92,8 +102,6 @@ inline uint16_t dashComputeLegacyMppTargetKph(int currentKph)
     }
     // currentKph >= 80
     if (!legacyMppHighSpeedEnable) return 0;
-    uint8_t idx = static_cast<uint8_t>((currentKph - kLegacyMppHighSpeedBucketBaseKph) /
-                                        kLegacyMppHighSpeedBucketStepKph);
-    if (idx >= kLegacyMppHighSpeedBucketCount) idx = kLegacyMppHighSpeedBucketCount - 1;
+    uint8_t idx = dashLegacyMppHighSpeedBucketIndex(currentKph);
     return legacyMppHighSpeedTarget[idx];
 }

@@ -185,9 +185,6 @@ static constexpr unsigned long kDashSleepLightSliceUs = 500000;
 static constexpr unsigned long kDashSleepLockFallbackMs = 30000;
 static constexpr unsigned long kDashSleepDriveSignalFreshMs = 30000;
 static constexpr unsigned long kDashSleepLatchedLockFreshMs = 60000;
-// How recently the module must have injected an FSD frame to count as "AP in
-// use" and block light sleep (grey-steering-wheel safeguard).
-static constexpr unsigned long kDashSleepApInjectFreshMs = 3000;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
@@ -1172,22 +1169,6 @@ static bool dashSleepDriverClearReady()
     return dashSleepVehicleEmptyReady();
 }
 
-// Safeguard A: never enter light sleep while Autopilot/FSD is actively engaged
-// or while the module is actively injecting FSD frames. Sleeping there would
-// halt CAN and make the grey steering wheel (AP/EAP available) flicker.
-// Uses dynamic in-use signals only: APActive and a recent injection. The
-// static GTW_autopilot capability value is intentionally NOT used as a gate
-// because it is permanently >=1 on AP-equipped cars and would disable sleep.
-static bool dashSleepApBusy()
-{
-    if (dashHandler && (bool)dashHandler->APActive)
-        return true;
-    if (canActive && forceActivate &&
-        dashSleepSignalFresh(lastInjectMs, kDashSleepApInjectFreshMs))
-        return true;
-    return false;
-}
-
 static const char *dashSleepBlockReason()
 {
     if (!dashAutoSleepEnabled)
@@ -1196,8 +1177,6 @@ static const char *dashSleepBlockReason()
         return "sleeping";
     if (Update.isRunning())
         return "ota running";
-    if (dashSleepApBusy())
-        return "AP active/injecting";
     if (!dashSleepParkStateReady())
     {
         if (!dashSleepGearKnown)
@@ -1221,15 +1200,11 @@ static bool dashSleepParkLockReady()
 {
     if (!dashAutoSleepEnabled || dashSleepActive || Update.isRunning())
         return false;
-    if (dashSleepApBusy())            // A: never sleep while AP active/injecting
+    if (!dashSleepParkStateReady())
         return false;
-    if (!dashSleepParkStateReady())   // 2: gear == P, or low-power park fallback
+    if (!dashSleepDriverClearReady())
         return false;
-    if (dashSleepSeatOccupied())      // cabin not empty
-        return false;
-    if (!dashSleepDriverClearReady()) // cabin empty (driver + seats)
-        return false;
-    if (!dashSleepEffectiveLocked())  // vehicle locked
+    if (!dashSleepEffectiveLocked())
         return false;
     return true;
 }
@@ -1705,7 +1680,7 @@ static void dashLoadPrefs()
     {
         char k[8];
         static const uint8_t defCt[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
-        static const uint8_t defHs[kHw3HighSpeedBucketCount] = {90, 110, 130};
+        static const uint8_t defHs[kHw3HighSpeedBucketCount] = {90, 110, 120, 130};
         for (uint8_t i = 0; i < kHw3CustomTargetCount; i++)
         {
             snprintf(k, sizeof(k), "h3_ct%u", (unsigned)i);
@@ -1725,7 +1700,7 @@ static void dashLoadPrefs()
     {
         char k[8];
         static const uint8_t defLgCt[kLegacyMppCustomTargetCount] = {45, 60, 75, 90, 105};
-        static const uint8_t defLgHt[kLegacyMppHighSpeedBucketCount] = {90, 110, 130};
+        static const uint8_t defLgHt[kLegacyMppHighSpeedBucketCount] = {90, 110, 120, 130};
         for (uint8_t i = 0; i < kLegacyMppCustomTargetCount; i++)
         {
             snprintf(k, sizeof(k), "lg_ct%u", (unsigned)i);
@@ -1935,21 +1910,60 @@ static void dashApplyFilters()
 }
 
 // CAN Priority Mode filter policy.
-// When priority mode is on AND FSD writes are armed, we narrow the hardware
-// acceptance filter to the frames the FSD loop actually needs to see in
-// real-time. Auto-sleep diagnostic IDs (EPAS power, UI lock request, VCSEC
-// lock status, driver present, seat occupancy) are dropped from the priority
-// set so the TWAI single-mask filter does not degenerate into accept-all.
-// Outside priority mode, we restore the full filter set so all features keep
-// working as before.
-static constexpr uint32_t kDashSleepDiagIds[] = {49, 627, 825, 929, 962, 963};
-
-static bool dashIsSleepDiagId(uint32_t id)
+// When priority mode is on AND FSD writes are armed, use a mode-specific
+// real-time filter set instead of "all IDs minus sleep diagnostics". This keeps
+// Legacy/HW3/HW4 from carrying unrelated frame reads into the TWAI mask.
+// Outside priority mode, restore the full handler filter set so sleep,
+// diagnostics, recorder and AP restore observation keep working as before.
+static bool dashHandlerHasFilterId(const uint32_t *ids, uint8_t count, uint32_t id)
 {
-    for (uint32_t s : kDashSleepDiagIds)
-        if (s == id)
+    for (uint8_t i = 0; i < count; i++)
+        if (ids[i] == id)
             return true;
     return false;
+}
+
+static void dashAppendPriorityId(uint32_t *out, uint8_t &count, uint8_t cap,
+                                 const uint32_t *all, uint8_t allCount, uint32_t id)
+{
+    if (count >= cap || !dashHandlerHasFilterId(all, allCount, id))
+        return;
+    for (uint8_t i = 0; i < count; i++)
+        if (out[i] == id)
+            return;
+    out[count++] = id;
+}
+
+static uint8_t dashBuildCanPriorityIds(const uint32_t *all, uint8_t allCount,
+                                       uint32_t *out, uint8_t cap)
+{
+    uint8_t pc = 0;
+    if (!all || allCount == 0 || !out || cap == 0)
+        return 0;
+
+    if (hwMode == 0)
+    {
+        // Legacy real-time path: follow-distance/profile source + activation
+        // frame. Optional MPP/AP-gate inputs are added only when their features
+        // need them because they widen the TWAI hardware mask significantly.
+        dashAppendPriorityId(out, pc, cap, all, allCount, 69);   // 0x045 STW_ACTN_RQ
+        dashAppendPriorityId(out, pc, cap, all, allCount, 1006); // 0x3EE AD mux frame
+        if (dashLegacyMppActive())
+            dashAppendPriorityId(out, pc, cap, all, allCount, 760); // 0x2F8 MPP speed limit
+        if (apInjectionGate)
+            dashAppendPriorityId(out, pc, cap, all, allCount, 921); // 0x399 AP active gate
+    }
+    else
+    {
+        // HW3/HW4 share the real-time activation inputs. 0x7FF is status-only
+        // for the dashboard, so priority mode drops it to keep the TWAI mask at
+        // about 16 standard-ID combinations instead of ~64 or worse.
+        dashAppendPriorityId(out, pc, cap, all, allCount, 921);  // 0x399 DAS_status
+        dashAppendPriorityId(out, pc, cap, all, allCount, 1016); // 0x3F8 driver assist control
+        dashAppendPriorityId(out, pc, cap, all, allCount, 1021); // 0x3FD autopilot control
+    }
+
+    return pc;
 }
 
 static void dashApplyCanFilterPolicy()
@@ -1968,12 +1982,7 @@ static void dashApplyCanFilterPolicy()
     if (wantPriority)
     {
         uint32_t priority[32];
-        uint8_t pc = 0;
-        for (uint8_t i = 0; i < count && pc < 32; i++)
-        {
-            if (!dashIsSleepDiagId(all[i]))
-                priority[pc++] = all[i];
-        }
+        uint8_t pc = dashBuildCanPriorityIds(all, count, priority, 32);
         if (pc == 0)
         {
             dashDriver->setFilters(all, count);
@@ -4579,7 +4588,7 @@ static void handleSettingsImport()
         {
             JsonArray arr = doc["hw3"]["customTargets"].as<JsonArray>();
             char k[8];
-            for (uint8_t i = 0; i < kHw3HighSpeedBucketCount && i < arr.size(); i++)
+            for (uint8_t i = 0; i < kHw3CustomTargetCount && i < arr.size(); i++)
             {
                 snprintf(k, sizeof(k), "h3_ct%u", (unsigned)i);
                 p.putUChar(k, dashClampHw3CustomTargetForBucket(i, arr[i].as<int>()));
@@ -4589,7 +4598,7 @@ static void handleSettingsImport()
         {
             JsonArray arr = doc["hw3"]["highSpeedTargets"].as<JsonArray>();
             char k[8];
-            for (uint8_t i = 0; i < 5 && i < arr.size(); i++)
+            for (uint8_t i = 0; i < kHw3HighSpeedBucketCount && i < arr.size(); i++)
             {
                 snprintf(k, sizeof(k), "h3_ht%u", (unsigned)i);
                 p.putUChar(k, dashClampHw3HighSpeedTargetForBucket(i, arr[i].as<int>()));

@@ -33,9 +33,8 @@ inline constexpr uint8_t kHw3CustomBucketBaseKph = 30;
 inline constexpr uint8_t kHw3CustomBucketStepKph = 10;
 inline constexpr uint8_t kHw3CustomTargetCount = 5; // 30/40/50/60/70
 inline constexpr uint8_t kHw3StockOffsetCutoverKph = 80;
-inline constexpr uint8_t kHw3HighSpeedBucketBaseKph = 80;
-inline constexpr uint8_t kHw3HighSpeedBucketStepKph = 20;
-inline constexpr uint8_t kHw3HighSpeedBucketCount = 3; // 80/100/120
+inline constexpr uint8_t kHw3HighSpeedBucketCount = 4; // 80/100/110/120
+inline constexpr uint8_t kHw3HighSpeedBucketKph[kHw3HighSpeedBucketCount] = {80, 100, 110, 120};
 inline constexpr uint8_t kHw3SpeedOffsetMaxPct = 50;
 inline constexpr uint8_t kHw3WireEncKph5 = 0;
 inline constexpr uint8_t kHw3WireEncPct4 = 1;
@@ -43,13 +42,13 @@ inline constexpr uint8_t kHw3WireEncDefault = kHw3WireEncPct4;
 inline constexpr uint8_t kHw3CustomTargetMaxKph = 160;
 inline constexpr uint8_t kHw3HighSpeedTargetMaxKph = 200;
 inline constexpr uint8_t kHw3CustomTargetMaxByBucket[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
-inline constexpr uint8_t kHw3HighSpeedTargetMaxByBucket[kHw3HighSpeedBucketCount] = {120, 150, 180};
+inline constexpr uint8_t kHw3HighSpeedTargetMaxByBucket[kHw3HighSpeedBucketCount] = {120, 150, 165, 180};
 
 // ─── Runtime state (settings) ────────────────────────────────────────────────
 inline bool hw3CustomSpeed = false;
 inline uint8_t hw3CustomTarget[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
 inline bool hw3HighSpeedEnable = false;
-inline uint8_t hw3HighSpeedTarget[kHw3HighSpeedBucketCount] = {90, 110, 130};
+inline uint8_t hw3HighSpeedTarget[kHw3HighSpeedBucketCount] = {90, 110, 120, 130};
 inline uint8_t hw3WireEncoding = kHw3WireEncDefault;
 
 // ─── Runtime state (live values) ─────────────────────────────────────────────
@@ -88,6 +87,17 @@ inline uint8_t dashClampHw3HighSpeedTargetForBucket(uint8_t idx, int v)
     if (v < 0) v = 0;
     if (v > maxKph) v = maxKph;
     return static_cast<uint8_t>(v);
+}
+
+inline uint8_t dashHw3HighSpeedBucketIndex(uint16_t flKph)
+{
+    uint8_t idx = 0;
+    for (uint8_t i = 1; i < kHw3HighSpeedBucketCount; i++)
+    {
+        if (flKph >= kHw3HighSpeedBucketKph[i])
+            idx = i;
+    }
+    return idx;
 }
 
 // "Custom" target — looks up hw3CustomTarget[idx] for the 30/40/50/60/70 kph
@@ -151,9 +161,7 @@ inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
     }
     else if (flKph >= kHw3StockOffsetCutoverKph && hw3HighSpeedEnable)
     {
-        uint8_t idx = static_cast<uint8_t>((flKph - kHw3HighSpeedBucketBaseKph) /
-                                           kHw3HighSpeedBucketStepKph);
-        if (idx >= kHw3HighSpeedBucketCount) idx = kHw3HighSpeedBucketCount - 1;
+        uint8_t idx = dashHw3HighSpeedBucketIndex(flKph);
         uint8_t targetKph = hw3HighSpeedTarget[idx];
         desiredOffsetKph = targetKph > flKph ? static_cast<int>(targetKph - flKph) : 0;
     }
