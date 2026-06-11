@@ -271,24 +271,39 @@ void test_hw3_mux1_sends_exactly_1()
 
 void test_hw3_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(12, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(8, handler.filterIdCount());
 }
 
 void test_hw3_filter_ids_values()
 {
     const uint32_t *ids = handler.filterIds();
-    TEST_ASSERT_EQUAL_UINT32(49, ids[0]);
-    TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(390, ids[2]);
-    TEST_ASSERT_EQUAL_UINT32(627, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(825, ids[4]);
-    TEST_ASSERT_EQUAL_UINT32(921, ids[5]);
-    TEST_ASSERT_EQUAL_UINT32(929, ids[6]);
-    TEST_ASSERT_EQUAL_UINT32(962, ids[7]);
-    TEST_ASSERT_EQUAL_UINT32(963, ids[8]);
-    TEST_ASSERT_EQUAL_UINT32(1016, ids[9]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[10]);
-    TEST_ASSERT_EQUAL_UINT32(2047, ids[11]);
+    TEST_ASSERT_EQUAL_UINT32(280, ids[0]);
+    TEST_ASSERT_EQUAL_UINT32(390, ids[1]);
+    TEST_ASSERT_EQUAL_UINT32(627, ids[2]);
+    TEST_ASSERT_EQUAL_UINT32(825, ids[3]);
+    TEST_ASSERT_EQUAL_UINT32(921, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(1016, ids[5]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[6]);
+    TEST_ASSERT_EQUAL_UINT32(2047, ids[7]);
+}
+
+static bool hw3_filter_contains(uint32_t id)
+{
+    const uint32_t *ids = handler.filterIds();
+    for (uint8_t i = 0; i < handler.filterIdCount(); i++)
+    {
+        if (ids[i] == id)
+            return true;
+    }
+    return false;
+}
+
+void test_hw3_filter_excludes_removed_ap_restore_ids()
+{
+    TEST_ASSERT_FALSE(hw3_filter_contains(0x129));
+    TEST_ASSERT_FALSE(hw3_filter_contains(0x148));
+    TEST_ASSERT_FALSE(hw3_filter_contains(0x293));
+    TEST_ASSERT_FALSE(hw3_filter_contains(0x389));
 }
 
 int main()
@@ -297,6 +312,7 @@ int main()
 
     RUN_TEST(test_hw3_filter_ids_count);
     RUN_TEST(test_hw3_filter_ids_values);
+    RUN_TEST(test_hw3_filter_excludes_removed_ap_restore_ids);
 
     RUN_TEST(test_hw3_follow_distance_1_sets_profile_2);
     RUN_TEST(test_hw3_follow_distance_2_sets_profile_1);

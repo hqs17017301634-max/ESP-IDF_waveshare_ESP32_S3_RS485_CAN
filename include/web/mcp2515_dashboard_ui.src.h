@@ -491,13 +491,6 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-name">AP/EAP Auto Restore</div>
-          <div class="setting-desc">Optional 0x293 Autosteer enable restore after AP/EAP ACC drop. Default off.</div>
-        </div>
-        <label class="tgl"><input type="checkbox" id="ap-restore-tgl" onchange="saveApRestore()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
           <div class="setting-name">CAN Priority Mode</div>
           <div class="setting-desc">In-car real-time mode. Narrows CAN hardware filter to FSD-critical IDs only, disables sniffer/system stats/auto WiFi scan, keeps WebUI alive but throttled. ON by default.</div>
         </div>
@@ -507,7 +500,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       <div class="setting-row">
         <div class="setting-info">
           <div class="setting-name">CAN/WiFi Auto Sleep</div>
-          <div class="setting-desc">After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.</div>
+          <div class="setting-desc">After a lock signal is detected, stop CAN read/write, turn off WiFi/WebUI, and enter deep sleep until the next power-on or reset.</div>
         </div>
         <label class="tgl"><input type="checkbox" id="auto-sleep-tgl" onchange="saveAutoSleep()"><div class="tgl-track"><div class="tgl-thumb"></div></div></label>
       </div>
@@ -990,7 +983,7 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
 Version: 3.0.0-beta.5
-OTA timestamp: 2026-06-01 09:48:16 +08:00</div>
+OTA timestamp: 2026-06-11 17:52:18 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1012,7 +1005,7 @@ OTA timestamp: 2026-06-01 09:48:16 +08:00</div>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
     <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.5
-OTA timestamp: 2026-06-01 09:48:16 +08:00</div>
+OTA timestamp: 2026-06-11 17:52:18 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1310,7 +1303,7 @@ Object.assign(I18N_ZH,{
   '80/100/110/120 km/h buckets. Max target: 120/150/155/155 km/h.':'80/100/110/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-06-01 09:48:16 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-06-01 09:48:16 +08:00',
+  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-06-11 17:52:18 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-06-11 17:52:18 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -1325,6 +1318,7 @@ Object.assign(I18N_ZH,{
   'none':'\u65e0',
   'whitelist override blacklist':'\u767d\u540d\u5355\u8986\u76d6\u9ed1\u540d\u5355',
   'CAN/WiFi Auto Sleep':'CAN/WiFi \u81ea\u52a8\u4f11\u7720',
+  'After a lock signal is detected, stop CAN read/write, turn off WiFi/WebUI, and enter deep sleep until the next power-on or reset.':'\u68c0\u6d4b\u5230\u9501\u8f66\u4fe1\u53f7\u540e\uff0c\u505c\u6b62 CAN \u8bfb\u5199\uff0c\u5173\u95ed WiFi/WebUI\uff0c\u5e76\u8fdb\u5165\u6df1\u5ea6\u4f11\u7720\uff1b\u4e0b\u6b21\u4e0a\u7535\u6216\u590d\u4f4d\u540e\u91cd\u65b0\u521d\u59cb\u5316\u3002',
   'After Park + locked + empty cabin stays stable for 10s, turn off AP/STA WiFi and CAN injection. CAN RX or seat occupancy wakes the device.':'P 档 + 锁车 + 车内无人稳定 10 秒后，关闭 AP/STA WiFi 和 CAN 注入；CAN RX 或座椅占用可唤醒设备。',
   'Sleep diag: waiting for status':'\u4f11\u7720\u8bca\u65ad\uff1a\u7b49\u5f85\u72b6\u6001',
   'CAN Priority Mode':'CAN \u4f18\u5148\u6a21\u5f0f',
@@ -2221,25 +2215,17 @@ function updateAutoSleepStatus(d){
   const el=$('auto-sleep-status');
   if(!el)return;
   const locked=!!d.sleepLocked;
-  const ready=!!d.sleepReady;
-  const park=!!d.sleepParkState;
-  const empty=!!d.sleepVehicleEmpty;
-  const countdown=Number(d.sleepCountdownMs);
   const sep=' \u2022 ';
-  const cd=countdown>=0?(sep+sleepT('sleep in ','\u4f11\u7720\u5012\u8ba1\u65f6 ')+Math.ceil(countdown/1000)+'s'):'';
-  const stateLine=sleepT('Status','\u72b6\u6001')+': '+(d.autoSleep?'ON':'OFF')+' / '+sleepStateText(d.sleepState)+sep+sleepReasonText(d.sleepReason)+cd;
+  const stateLine=sleepT('Status','\u72b6\u6001')+': '+(d.autoSleep?'ON':'OFF')+' / '+sleepStateText(d.sleepState)+sep+sleepReasonText(d.sleepReason);
   const lockSrc=sleepLockSourceText(d.sleepLockSource);
-  const cabin=sleepCabinText(d,empty);
-  const sleepKind=d.sleepLockFallback?sleepT('park fallback sleep','\u505c\u8f66\u515c\u5e95\u4f11\u7720'):(locked?sleepT('lock-signal sleep','\u9501\u8f66\u4fe1\u53f7\u4f11\u7720'):sleepT('software sleep','\u8f6f\u4ef6\u4f11\u7720'));
-  const wakeKind=sleepWakeSourceText(d.sleepLastWakeSource)+' / '+sleepWakeReasonText(d.sleepLastWakeReason);
+  const sleepKind=locked?sleepT('lock-signal deep sleep','\u9501\u8f66\u4fe1\u53f7\u6df1\u5ea6\u4f11\u7720'):sleepT('software deep sleep','\u8f6f\u4ef6\u6df1\u5ea6\u4f11\u7720');
+  const wakeKind=sleepT('power-on/reset only','\u4ec5\u91cd\u65b0\u4e0a\u7535/\u590d\u4f4d');
   const lines=[
     stateLine,
-    sleepT('Gear','\u6863\u4f4d')+': '+gearText(d.sleepGear)+sep+sleepT('Park','\u505c\u8f66')+': '+boolTriText(park)+sep+sleepT('Locked','\u9501\u8f66')+': '+boolTriText(locked)+' ('+lockSrc+')',
-    sleepT('Cabin','\u8f66\u5185')+': '+cabin,
-    sleepSeatLine(d),
+    sleepT('Locked','\u9501\u8f66')+': '+boolTriText(locked)+' ('+lockSrc+')',
     sleepT('Sleep count','\u4f11\u7720\u6b21\u6570')+': '+sleepT('session','\u672c\u6b21')+' '+(d.sleepCount||0)+' / '+sleepT('total','\u7d2f\u8ba1')+' '+(d.sleepTotalCount||0),
     sleepT('Last sleep','\u4e0a\u6b21\u4f11\u7720')+': '+fmtSleepDuration(d.sleepLastDurationSec),
-    sleepT('Wake count','\u5524\u9192\u6b21\u6570')+': CAN '+(d.sleepCanWakeCount||0)+' / '+sleepT('reboot','\u91cd\u542f')+' '+(d.sleepRebootWakeCount||0),
+    sleepT('Wake count','\u5524\u9192\u6b21\u6570')+': '+sleepT('power-on/reset','\u4e0a\u7535/\u590d\u4f4d')+' '+(d.sleepRebootWakeCount||0),
     sleepT('Sleep type','\u4f11\u7720\u7c7b\u578b')+': '+sleepKind,
     sleepT('Wake type','\u5524\u9192\u7c7b\u578b')+': '+wakeKind
   ];
@@ -2252,7 +2238,6 @@ function updateFsdControl(d){
   const enabled=!!d.ci;
   state.can=enabled;
   const tgl=$('fsd-tgl');if(tgl)tgl.checked=enabled;
-  const apRestore=$('ap-restore-tgl');if(apRestore&&typeof d.apAutoRestore!=='undefined')apRestore.checked=!!d.apAutoRestore;
   const autoSleep=$('auto-sleep-tgl');if(autoSleep&&typeof d.autoSleep!=='undefined')autoSleep.checked=!!d.autoSleep;
   updateAutoSleepStatus(d);
   setText('fsd-meta',enabled?'On':'Off');
@@ -2276,17 +2261,6 @@ async function saveFsdSwitch(){
     if(st){st.textContent=state.can?'Built-in FSD chain is active.':'FSD chain and CAN injection are disabled.';st.style.color=state.can?'var(--ok)':'var(--tx3)';}
     poll();
   }catch(e){if(st){st.textContent='Save failed';st.style.color='var(--err)';}}
-}
-
-async function saveApRestore(){
-  const t=$('ap-restore-tgl');
-  if(!t)return;
-  try{
-    const r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'apRestore='+(t.checked?'1':'0')});
-    if(!r.ok)throw new Error('HTTP '+r.status);
-  }catch(e){
-    addLog('AP/EAP auto restore save failed','le');
-  }
 }
 
 async function saveAutoSleep(){

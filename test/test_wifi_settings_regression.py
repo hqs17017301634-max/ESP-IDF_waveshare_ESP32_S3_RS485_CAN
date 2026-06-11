@@ -138,9 +138,9 @@ class WifiSettingsRegressionTests(unittest.TestCase):
 
     def test_ap_injection_gate_setting_is_persisted_and_exposed(self) -> None:
         # The dedicated AP-injection-gate UI toggle (ap-gate-tgl / saveApGate /
-        # updateApGateControl) and the legacy "apg" POST arg were removed when the
-        # control was folded into AP/EAP Auto Restore. The gate is still persisted
-        # and surfaced in the status payload, so keep covering the backend contract.
+        # updateApGateControl) and the legacy "apg" POST arg are gone. The gate
+        # is still persisted and surfaced in the status payload, so keep covering
+        # the backend contract.
         expected_backend_fields = [
             '"ap_gate"',
             '\\"apGate\\"',

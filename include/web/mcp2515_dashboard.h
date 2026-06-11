@@ -124,7 +124,6 @@ static bool forceActivate = false;
 // 复刻 2.5.2 真车固件默认行为（kDashApGateDefaultEnabled=false）。
 // 当 true 时回到 3.0 早期行为：必须 Parked||APActive||Summoning 才允许注入。
 static bool apInjectionGate = false;
-static bool apAutoRestore = false;
 static bool dashAutoSleepEnabled = false;
 static bool dashCanPriorityMode = true;
 static bool dashCanPriorityFilterActive = false;
@@ -343,76 +342,11 @@ struct DashWriteProbe
 };
 static DashWriteProbe dashWriteProbe;
 
-struct DashApRestoreState
-{
-    bool gearSeen = false;
-    uint8_t gearRaw = 0xFF;
-    bool brakeSeen = false;
-    uint8_t brakePedalRaw = 0xFF;
-    bool chassisSeen = false;
-    bool brakeTorqueActive = false;
-    uint8_t anyVdcActive = 0xFF;
-    bool tcActive = false;
-    uint8_t vdcControlActive = 0xFF;
-    bool steerSeen = false;
-    uint8_t steerValidity = 0xFF;
-    int16_t steerAngleX10 = 0;
-    int16_t steerSpeedX10 = 0;
-    unsigned long steerMs = 0;
-    bool dasSettingsSeen = false;
-    uint8_t dasSettingsData[8] = {};
-    unsigned long dasSettingsMs = 0;
-    uint8_t dasSettingsCounter = 0xFF;
-    bool dasAccSeen = false;
-    uint8_t dasAccState = 0xFF;
-    unsigned long dasAccDropMs = 0;
-    unsigned long lastDropHandledMs = 0;
-    unsigned long lastTxMs = 0;
-};
-static DashApRestoreState apRestoreState;
-static constexpr unsigned long kDashApRestoreTxCooldownMs = 1000;
-
 static int8_t dashFrameMux(const CanFrame &frame)
 {
     if ((frame.id == 1006 || frame.id == 1021) && frame.dlc > 0)
         return static_cast<int8_t>(readMuxID(frame));
     return -1;
-}
-
-static uint32_t dashReadBitsLE(const CanFrame &frame, uint8_t startBit, uint8_t bitCount)
-{
-    uint32_t value = 0;
-    for (uint8_t i = 0; i < bitCount; i++)
-    {
-        uint8_t bit = startBit + i;
-        if (bit >= frame.dlc * 8)
-            break;
-        if (frame.data[bit / 8] & (1U << (bit % 8)))
-            value |= 1UL << i;
-    }
-    return value;
-}
-
-static bool dashReadBit(const CanFrame &frame, uint8_t bit)
-{
-    return dashReadBitsLE(frame, bit, 1) != 0;
-}
-
-static uint8_t dashCounterChecksumByte(const CanFrame &frame, uint8_t checksumByteIndex = 7)
-{
-    if (checksumByteIndex >= frame.dlc)
-        return 0;
-    uint16_t sum = static_cast<uint16_t>(frame.id & 0xFF) +
-                   static_cast<uint16_t>((frame.id >> 8) & 0xFF);
-    for (uint8_t i = 0; i < frame.dlc; i++)
-    {
-        if (i == checksumByteIndex)
-            sum += frame.data[i] & 0x0F;
-        else
-            sum += frame.data[i];
-    }
-    uint8_t checksum = static_cast<uint8_t>((0x10 - (sum & 0x0F)) & 0x0F);
-    return static_cast<uint8_t>((checksum << 4) | (frame.data[checksumByteIndex] & 0x0F));
 }
 
 static void dashResetWriteProbe()
@@ -531,54 +465,6 @@ static void dashRecordCanFrame(const CanFrame &f, char dir)
     recCount = idx + 1;
     if (recCount >= REC_CAP)
         dashStopRecordingAndSave("frame limit");
-}
-
-static void dashRecordApRestoreFrame(const CanFrame &frame, unsigned long now)
-{
-    if (frame.id == 280 && frame.dlc >= 3)
-    {
-        apRestoreState.gearSeen = true;
-        apRestoreState.gearRaw = readDIGear(frame);
-        apRestoreState.brakeSeen = true;
-        apRestoreState.brakePedalRaw = static_cast<uint8_t>(dashReadBitsLE(frame, 19, 2));
-        return;
-    }
-    if (frame.id == 0x148 && frame.dlc >= 8)
-    {
-        apRestoreState.chassisSeen = true;
-        apRestoreState.brakeTorqueActive = dashReadBit(frame, 15);
-        apRestoreState.anyVdcActive = static_cast<uint8_t>(dashReadBitsLE(frame, 34, 2));
-        apRestoreState.tcActive = dashReadBit(frame, 42);
-        apRestoreState.vdcControlActive = static_cast<uint8_t>(dashReadBitsLE(frame, 60, 3));
-        return;
-    }
-    if (frame.id == 0x129 && frame.dlc >= 6)
-    {
-        uint16_t angleRaw = static_cast<uint16_t>(dashReadBitsLE(frame, 16, 14));
-        uint16_t speedRaw = static_cast<uint16_t>(dashReadBitsLE(frame, 32, 14));
-        apRestoreState.steerSeen = true;
-        apRestoreState.steerValidity = static_cast<uint8_t>(dashReadBitsLE(frame, 30, 2));
-        apRestoreState.steerAngleX10 = angleRaw == 0x3FFF ? 0 : static_cast<int16_t>(angleRaw) - 8192;
-        apRestoreState.steerSpeedX10 = static_cast<int16_t>(static_cast<int32_t>(speedRaw) * 5 - 40960);
-        apRestoreState.steerMs = now;
-        return;
-    }
-    if (frame.id == 0x293 && frame.dlc >= 8)
-    {
-        apRestoreState.dasSettingsSeen = true;
-        apRestoreState.dasSettingsMs = now;
-        memcpy(apRestoreState.dasSettingsData, frame.data, 8);
-        apRestoreState.dasSettingsCounter = frame.data[7] & 0x0F;
-        return;
-    }
-    if (frame.id == 0x389 && frame.dlc >= 4)
-    {
-        uint8_t accState = static_cast<uint8_t>((frame.data[3] >> 2) & 0x1F);
-        if (apRestoreState.dasAccSeen && apRestoreState.dasAccState > 0 && accState == 0)
-            apRestoreState.dasAccDropMs = now;
-        apRestoreState.dasAccSeen = true;
-        apRestoreState.dasAccState = accState;
-    }
 }
 
 static bool dashWriteProbeMatches(const CanFrame &frame)
@@ -705,7 +591,6 @@ static void mcpDashOnFrame(const CanFrame &f)
     }
     if (f.id == 1016 && f.dlc > 5)
         followDist = (f.data[5] & 0xE0) >> 5;
-    dashRecordApRestoreFrame(f, now);
     dashRecordCanFrame(f, 'R');
     if (dashWriteProbe.active && dashWriteProbe.state != kDashWriteProbeFailed && dashWriteProbeMatches(f))
     {
@@ -789,19 +674,6 @@ static bool dashApInjectionAllowed()
 static bool dashInjectionActive()
 {
     return canActive && dashApInjectionAllowed();
-}
-
-static bool dashApRestoreBraking()
-{
-    return (apRestoreState.brakeSeen && apRestoreState.brakePedalRaw == 1) ||
-           (apRestoreState.chassisSeen && apRestoreState.brakeTorqueActive);
-}
-
-static bool dashApRestoreStabilityBlocked()
-{
-    return apRestoreState.chassisSeen &&
-           (apRestoreState.anyVdcActive == 1 || apRestoreState.vdcControlActive > 0 ||
-            apRestoreState.tcActive);
 }
 
 static uint32_t dashReadLeBits(const CanFrame &frame, uint8_t startBit, uint8_t length)
@@ -1018,24 +890,6 @@ static void dashSleepPersistEnterDiag()
     p.end();
 }
 
-static void dashSleepPersistWakeDiag(const char *reason)
-{
-    dashSleepPersistCanWakeCount++;
-    dashSleepLastRxCount = dashSleepCurrentRxCount;
-    dashSleepLastWakeUptimeSec = (millis() - startMs) / 1000UL;
-    dashSleepLastDurationSec = dashSleepEnteredMs ? ((millis() - dashSleepEnteredMs) / 1000UL) : kDashSleepDurationUnknown;
-    dashSleepSetText(dashSleepLastWakeSource, sizeof(dashSleepLastWakeSource), "CAN");
-    dashSleepSetText(dashSleepLastWakeReason, sizeof(dashSleepLastWakeReason), reason ? reason : "unknown");
-    dashSleepLastEndedByReboot = false;
-
-    Preferences p;
-    if (!p.begin(PREFS_NS, false))
-        return;
-    p.putBool("slp_active", false);
-    dashSleepPersistDiag(p);
-    p.end();
-}
-
 static bool dashSleepVcsecStatusLocked(uint8_t status);
 static bool dashSleepVcsecStatusUnlocked(uint8_t status);
 
@@ -1133,9 +987,8 @@ static bool dashSleepLowPowerLockFallbackReady()
 
 static bool dashSleepEffectiveLocked()
 {
-    return (dashSleepLockLatched &&
-            dashSleepSignalFresh(dashSleepLockLatchedMs, kDashSleepLatchedLockFreshMs)) ||
-           dashSleepLowPowerLockFallbackReady();
+    return dashSleepLockLatched &&
+           dashSleepSignalFresh(dashSleepLockLatchedMs, kDashSleepLatchedLockFreshMs);
 }
 
 static const char *dashSleepEffectiveLockSource()
@@ -1143,8 +996,6 @@ static const char *dashSleepEffectiveLockSource()
     if (dashSleepLockLatched &&
         dashSleepSignalFresh(dashSleepLockLatchedMs, kDashSleepLatchedLockFreshMs))
         return dashSleepLockSource;
-    if (dashSleepLowPowerLockFallbackReady())
-        return "fallback";
     return "none";
 }
 
@@ -1168,7 +1019,6 @@ static bool dashSleepDriverClearReady()
 {
     return dashSleepVehicleEmptyReady();
 }
-
 static const char *dashSleepBlockReason()
 {
     if (!dashAutoSleepEnabled)
@@ -1177,32 +1027,14 @@ static const char *dashSleepBlockReason()
         return "sleeping";
     if (Update.isRunning())
         return "ota running";
-    if (!dashSleepParkStateReady())
-    {
-        if (!dashSleepGearKnown)
-            return "waiting P or park state";
-        if (dashSleepGear == 0 || dashSleepGear == 7)
-            return "waiting park fallback";
-        return "gear not P";
-    }
-    if (dashSleepSeatOccupied())
-        return "seat occupied";
-    if (!dashSleepDriverClearReady())
-        return dashSleepDriverKnown ? "driver present" : "waiting driver empty";
     if (!dashSleepEffectiveLocked())
         return "waiting lock 0x273/0x339";
-    if (dashSleepCandidateSinceMs)
-        return "pending 10s";
-    return "ready";
+    return "lock deep sleep ready";
 }
 
 static bool dashSleepParkLockReady()
 {
     if (!dashAutoSleepEnabled || dashSleepActive || Update.isRunning())
-        return false;
-    if (!dashSleepParkStateReady())
-        return false;
-    if (!dashSleepDriverClearReady())
         return false;
     if (!dashSleepEffectiveLocked())
         return false;
@@ -1363,57 +1195,12 @@ static void dashSleepObserveFrame(const CanFrame &frame)
     }
 }
 
-static void dashTryApAutoRestore(const CanFrame &trigger, CanDriver &driver)
-{
-    if (trigger.id != 0x389 || !apAutoRestore)
-        return;
-
-    unsigned long now = millis();
-    if (!apRestoreState.dasAccDropMs ||
-        apRestoreState.lastDropHandledMs == apRestoreState.dasAccDropMs ||
-        now - apRestoreState.dasAccDropMs > 250)
-        return;
-
-    apRestoreState.lastDropHandledMs = apRestoreState.dasAccDropMs;
-    if (!apRestoreState.dasSettingsSeen || now - apRestoreState.dasSettingsMs > 5000)
-        return;
-    if (!apRestoreState.gearSeen || apRestoreState.gearRaw != 4)
-        return;
-    if (dashApRestoreBraking() || dashApRestoreStabilityBlocked())
-        return;
-    if (apRestoreState.lastTxMs && now - apRestoreState.lastTxMs < kDashApRestoreTxCooldownMs)
-        return;
-
-    CanFrame modified{};
-    modified.id = 0x293;
-    modified.bus = CAN_BUS_DEFAULT;
-    modified.dlc = 8;
-    memcpy(modified.data, apRestoreState.dasSettingsData, 8);
-    CanFrame original = modified;
-    setBit(modified, 38, true);
-    setBit(modified, 24, true);
-    uint8_t counter = static_cast<uint8_t>(((apRestoreState.dasSettingsCounter == 0xFF ? 0 : apRestoreState.dasSettingsCounter) + 1) & 0x0F);
-    modified.data[7] = static_cast<uint8_t>((modified.data[7] & 0xF0) | counter);
-    modified.data[7] = dashCounterChecksumByte(modified);
-    if (!framePayloadChanged(original, modified))
-        return;
-
-    bool ok = driver.sendCritical(modified);
-    apRestoreState.lastTxMs = now;
-    if (ok)
-        lastInjectMs = now;
-    dashRecordCanFrame(modified, ok ? 'T' : 'E');
-    dashLog("[AP] Auto-restore " + String(ok ? "TX OK" : "TX FAIL"));
-}
-
 static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
 {
     dashSleepObserveFrame(original);
     if (dashSleepActive)
         return;
 #if defined(DASH_FSD_252_COMPAT) && DASH_FSD_252_COMPAT
-    dashTryApAutoRestore(original, driver);
-
     if ((hwMode != 0 && hwMode != 1) || !dashInjectionActive())
         return;
     const uint32_t activationId = hwMode == 0 ? 1006 : 1021;
@@ -1510,7 +1297,6 @@ static void dashSavePrefs()
     prefs.putBool("can", canActive);
     prefs.putBool("force_act", forceActivate);
     prefs.putBool("ap_gate", apInjectionGate);
-    prefs.putBool("ap_rst", apAutoRestore);
     prefs.putBool("auto_sleep", dashAutoSleepEnabled);
     prefs.putBool("canprio", dashCanPriorityMode);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
@@ -1663,7 +1449,6 @@ static void dashLoadPrefs()
         prefs.putBool("force_act", forceActivate);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", false);
-    apAutoRestore = prefs.getBool("ap_rst", false);
     dashAutoSleepEnabled = prefs.getBool("auto_sleep", false);
     dashCanPriorityMode = prefs.getBool("canprio", true);
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
@@ -1914,7 +1699,7 @@ static void dashApplyFilters()
 // real-time filter set instead of "all IDs minus sleep diagnostics". This keeps
 // Legacy/HW3/HW4 from carrying unrelated frame reads into the TWAI mask.
 // Outside priority mode, restore the full handler filter set so sleep,
-// diagnostics, recorder and AP restore observation keep working as before.
+// diagnostics and recorder keep working as before.
 static bool dashHandlerHasFilterId(const uint32_t *ids, uint8_t count, uint32_t id)
 {
     for (uint8_t i = 0; i < count; i++)
@@ -2095,8 +1880,6 @@ static void handleStatus()
     j += apGateOpen ? "true" : "false";
     j += ",\"apGateEnabled\":";
     j += apInjectionGate ? "true" : "false";
-    j += ",\"apAutoRestore\":";
-    j += apAutoRestore ? "true" : "false";
     j += ",\"autoSleep\":";
     j += dashAutoSleepEnabled ? "true" : "false";
     j += ",\"canprio\":";
@@ -2396,15 +2179,6 @@ static void handleConfig()
         if (v != dashSpeedProfileAuto)
             dashLog("[CFG] Speed profile " + String(v ? "AUTO" : "MANUAL"));
         dashSpeedProfileAuto = v;
-    }
-    if (server.hasArg("apRestore"))
-    {
-        bool v = server.arg("apRestore") == "1";
-        if (v != apAutoRestore)
-        {
-            apAutoRestore = v;
-            dashLog("[CFG] AP/EAP auto-restore " + String(v ? "ON" : "OFF"));
-        }
     }
     if (server.hasArg("autoSleep"))
     {
@@ -3114,6 +2888,8 @@ static void dashEnterLowPowerSleep()
     dashGatewayOnStaDisconnected(WiFi.apNetif());
     WiFi.disconnect(true, false);
 #ifdef ESP_PLATFORM
+    esp_wifi_disconnect();
+    esp_wifi_set_mode(WIFI_MODE_NULL);
     esp_wifi_stop();
 #endif
     dashSleepActive = true;
@@ -3122,24 +2898,13 @@ static void dashEnterLowPowerSleep()
     dashSleepEnteredMs = millis();
     dashSleepEnterCount++;
     dashSleepPersistEnterDiag();
-    dashLog("[SLEEP] Enter Park+Lock low-power sleep; WiFi/AP/STA off, CAN injection off");
-}
-
-static void dashExitLowPowerSleep(const char *reason)
-{
-    if (!dashSleepActive)
-        return;
-    dashSleepPersistWakeDiag(reason);
-    dashSleepActive = false;
-    dashSleepCandidateSinceMs = 0;
-    canActive = dashSleepSavedCanActive;
-    forceActivate = dashSleepSavedForceActivate;
-    dashApplyRuntimeState();
-
-    dashStartAccessPoint(true);
-    if (strlen(staSSID) > 0)
-        dashScheduleSTAConnect(kDashStaBootDelayMs);
-    dashLog("[SLEEP] Wake from low-power sleep: " + String(reason ? reason : "unknown"));
+    dashLog("[SLEEP] Lock signal detected; WiFi/WebUI off, CAN stopped, entering deep sleep until next power-on");
+#ifdef ESP_PLATFORM
+    Serial.println("[SLEEP] Deep sleep until next power-on/reset");
+    delay(100);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    esp_deep_sleep_start();
+#endif
 }
 
 static void dashSleepPoll()
@@ -3151,27 +2916,7 @@ static void dashSleepPoll()
     }
 
     if (dashSleepActive)
-    {
-        if (dashSleepWakeRequested)
-        {
-            const char *reason = dashSleepWakeReason;
-            dashSleepWakeRequested = false;
-            dashExitLowPowerSleep(reason);
-            return;
-        }
-#ifdef ESP_PLATFORM
-        esp_sleep_enable_timer_wakeup(kDashSleepLightSliceUs);
-#if defined(DRIVER_TWAI) && defined(TWAI_RX_PIN)
-        gpio_wakeup_enable(TWAI_RX_PIN, GPIO_INTR_LOW_LEVEL);
-        esp_sleep_enable_gpio_wakeup();
-#endif
-        esp_light_sleep_start();
-#if defined(DRIVER_TWAI) && defined(TWAI_RX_PIN)
-        gpio_wakeup_disable(TWAI_RX_PIN);
-#endif
-#endif
         return;
-    }
 
     if (!dashSleepParkLockReady())
     {
@@ -3179,15 +2924,8 @@ static void dashSleepPoll()
         return;
     }
 
-    unsigned long now = millis();
-    if (!dashSleepCandidateSinceMs)
-    {
-        dashSleepCandidateSinceMs = now;
-        dashLog("[SLEEP] Park+Lock detected; sleep in 10s if unchanged");
-        return;
-    }
-    if (now - dashSleepCandidateSinceMs >= kDashAutoSleepDelayMs)
-        dashEnterLowPowerSleep();
+    dashSleepCandidateSinceMs = millis();
+    dashEnterLowPowerSleep();
 }
 
 static String dashCachedScanJson;

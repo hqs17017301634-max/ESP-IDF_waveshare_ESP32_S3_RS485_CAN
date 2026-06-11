@@ -319,12 +319,13 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        // 49/627/825/929/962/963 feed dashboard auto-sleep: EPAS power, lock,
-        // VCSEC, driver/power state, and seat occupancy.
-        static constexpr uint32_t ids[] = {49, 280, 390, 627, 825, 921, 929, 962, 963, 1016, 1021, 2047};
+        // HW3 runtime only: gear/summon, lock deep-sleep trigger, AP/FSD,
+        // follow-distance/profile, and dashboard AP status. Legacy-only and
+        // old seat/EPAS sleep diagnostic IDs are intentionally excluded.
+        static constexpr uint32_t ids[] = {280, 390, 627, 825, 921, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 12; }
+    uint8_t filterIdCount() const override { return 8; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
