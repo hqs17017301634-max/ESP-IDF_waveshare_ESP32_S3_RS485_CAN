@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <driver/usb_serial_jtag.h>
+#include <lwip/ip4_addr.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -513,12 +514,34 @@ void WiFiClass::ensure()
     if (initialized_)
         return;
     configureWifiLogLevels();
-    esp_netif_init();
-    esp_event_loop_create_default();
-    apNetif_ = esp_netif_create_default_wifi_ap();
-    staNetif_ = esp_netif_create_default_wifi_sta();
+    const esp_err_t netifResult = esp_netif_init();
+    if (netifResult != ESP_OK && netifResult != ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGE(kCompatTag, "esp_netif_init failed: %s", esp_err_to_name(netifResult));
+        return;
+    }
+    const esp_err_t loopResult = esp_event_loop_create_default();
+    if (loopResult != ESP_OK && loopResult != ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGE(kCompatTag, "event loop init failed: %s", esp_err_to_name(loopResult));
+        return;
+    }
+    if (!apNetif_)
+        apNetif_ = esp_netif_create_default_wifi_ap();
+    if (!staNetif_)
+        staNetif_ = esp_netif_create_default_wifi_sta();
+    if (!apNetif_ || !staNetif_)
+    {
+        ESP_LOGE(kCompatTag, "default WiFi netif creation failed");
+        return;
+    }
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
+    const esp_err_t initResult = esp_wifi_init(&cfg);
+    if (initResult != ESP_OK)
+    {
+        ESP_LOGE(kCompatTag, "esp_wifi_init failed: %s", esp_err_to_name(initResult));
+        return;
+    }
     if (!wifiEventHandlersRegistered)
     {
         esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEventHandler, nullptr, nullptr);
@@ -531,8 +554,13 @@ void WiFiClass::ensure()
 void WiFiClass::mode(wifi_mode_t modeValue)
 {
     ensure();
-    esp_wifi_set_mode(modeValue);
-    esp_wifi_start();
+    if (!initialized_)
+        return;
+    const esp_err_t modeResult = esp_wifi_set_mode(modeValue);
+    const esp_err_t startResult = modeResult == ESP_OK ? esp_wifi_start() : modeResult;
+    if (modeResult != ESP_OK || startResult != ESP_OK)
+        ESP_LOGE(kCompatTag, "WiFi mode/start failed: mode=%s start=%s",
+                 esp_err_to_name(modeResult), esp_err_to_name(startResult));
 }
 
 wifi_mode_t WiFiClass::getMode()
@@ -548,12 +576,16 @@ wifi_mode_t WiFiClass::getMode()
 void WiFiClass::setSleep(bool enabled)
 {
     ensure();
+    if (!initialized_)
+        return;
     esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
 }
 
 bool WiFiClass::softAPConfig(IPAddress local, IPAddress gateway, IPAddress subnet)
 {
     ensure();
+    if (!initialized_ || !apNetif_)
+        return false;
     esp_netif_ip_info_t ip = {};
     ip.ip = local.raw();
     ip.gw = gateway.raw();
@@ -567,6 +599,8 @@ bool WiFiClass::softAPConfig(IPAddress local, IPAddress gateway, IPAddress subne
 bool WiFiClass::softAP(const char *ssid, const char *pass, int channelValue, int hidden, int maxConn)
 {
     ensure();
+    if (!initialized_)
+        return false;
     wifi_config_t cfg = {};
     std::snprintf(reinterpret_cast<char *>(cfg.ap.ssid), sizeof(cfg.ap.ssid), "%s", ssid ? ssid : "");
     std::snprintf(reinterpret_cast<char *>(cfg.ap.password), sizeof(cfg.ap.password), "%s", pass ? pass : "");
@@ -574,15 +608,26 @@ bool WiFiClass::softAP(const char *ssid, const char *pass, int channelValue, int
     cfg.ap.channel = channelValue;
     cfg.ap.max_connection = maxConn;
     cfg.ap.ssid_hidden = hidden;
-    cfg.ap.authmode = pass && std::strlen(pass) >= 8 ? WIFI_AUTH_WPA_WPA2_PSK : WIFI_AUTH_OPEN;
-    esp_wifi_set_config(WIFI_IF_AP, &cfg);
-    esp_wifi_start();
+    cfg.ap.authmode = pass && std::strlen(pass) >= 8 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    const esp_err_t configResult = esp_wifi_set_config(WIFI_IF_AP, &cfg);
+    const esp_err_t startResult = configResult == ESP_OK ? esp_wifi_start() : configResult;
+    if (configResult != ESP_OK || startResult != ESP_OK)
+    {
+        ESP_LOGE(kCompatTag, "softAP failed: config=%s start=%s",
+                 esp_err_to_name(configResult), esp_err_to_name(startResult));
+        return false;
+    }
     return true;
 }
 
 void WiFiClass::begin(const char *ssid, const char *pass)
 {
     ensure();
+    if (!initialized_)
+    {
+        wifiStaStatus = WL_CONNECT_FAILED;
+        return;
+    }
     wifiStaStatus = WL_IDLE_STATUS;
     wifiLastDisconnectReason = 0;
     // Ensure the STA interface is enabled before configuring it.
@@ -748,143 +793,117 @@ void WiFiClass::scanDelete()
     scanRecords_.clear();
 }
 
-size_t WiFiClient::readBytes(uint8_t *buf, size_t len)
-{
-    size_t available = data_.size() - std::min(offset_, data_.size());
-    size_t count = std::min(len, available);
-    if (count)
-    {
-        std::memcpy(buf, data_.data() + offset_, count);
-        offset_ += count;
-    }
-    return count;
-}
-
-bool HTTPClient::begin(WiFiClientSecure &, const String &url)
-{
-    url_ = url;
-    response_ = "";
-    return true;
-}
-
-int HTTPClient::GET()
-{
-    esp_http_client_config_t cfg = {};
-    cfg.url = url_.c_str();
-    cfg.timeout_ms = timeoutMs_;
-    cfg.skip_cert_common_name_check = true;
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client)
-        return -1;
-    yield();
-    esp_err_t err = esp_http_client_perform(client);
-    yield();
-    int status = esp_http_client_get_status_code(client);
-    if (err == ESP_OK)
-    {
-        int len = esp_http_client_get_content_length(client);
-        std::string body;
-        char buf[512];
-        int read = 0;
-        while ((read = esp_http_client_read(client, buf, sizeof(buf))) > 0)
-        {
-            body.append(buf, read);
-            yield();
-        }
-        if (body.empty() && len > 0)
-        {
-            body.resize(len);
-            esp_http_client_read_response(client, body.data(), len);
-            yield();
-        }
-        response_ = body;
-        stream_ = WiFiClient(body);
-    }
-    esp_http_client_cleanup(client);
-    return status;
-}
-
-WiFiClient *HTTPClient::getStreamPtr()
-{
-    return &stream_;
-}
-
-void HTTPClient::end()
-{
-    response_ = "";
-}
-
 void UpdateClass::setError(const char *message)
 {
     error_ = true;
     errorText_ = message ? message : "OTA error";
 }
 
-bool UpdateClass::begin(size_t)
+bool UpdateClass::begin(size_t imageSize)
 {
     abort();
-    partition_ = esp_ota_get_next_update_partition(nullptr);
-    if (!partition_)
-    {
-        setError("No OTA partition");
-        return false;
-    }
-    esp_err_t err = esp_ota_begin(partition_, OTA_SIZE_UNKNOWN, &handle_);
-    if (err != ESP_OK)
-    {
-        setError(esp_err_to_name(err));
-        return false;
-    }
     running_ = true;
     finished_ = false;
     error_ = false;
     errorText_.clear();
-    return true;
+    imagePrefixBytes_ = 0;
+    bytesReceived_ = 0;
+    bytesWritten_ = 0;
+    imagePrefix_.fill(0);
+    return prepareTargetPartition(imageSize);
 }
 
 size_t UpdateClass::write(const uint8_t *buf, size_t len)
 {
-    if (!running_)
+    if (!running_ || error_ || !buf || len == 0)
         return 0;
-    esp_err_t err = esp_ota_write(handle_, buf, len);
-    if (err != ESP_OK)
-    {
-        setError(esp_err_to_name(err));
-        return 0;
-    }
-    return len;
-}
 
-size_t UpdateClass::writeStream(WiFiClient &stream)
-{
-    uint8_t buf[1024];
-    size_t total = 0;
-    size_t n = 0;
-    while ((n = stream.readBytes(buf, sizeof(buf))) > 0)
+    if (!partition_ || bytesReceived_ > partition_->size ||
+        len > partition_->size - bytesReceived_)
     {
-        size_t written = write(buf, n);
-        total += written;
-        if (written != n)
-            break;
+        setError("Image exceeds OTA slot");
+        return 0;
     }
-    return total;
+
+    size_t consumed = 0;
+    if (imagePrefixBytes_ < imagePrefix_.size())
+    {
+        const size_t take = std::min(
+            len, imagePrefix_.size() - imagePrefixBytes_);
+        std::memcpy(imagePrefix_.data() + imagePrefixBytes_, buf, take);
+        imagePrefixBytes_ += take;
+        consumed += take;
+
+        if (imagePrefixBytes_ == imagePrefix_.size())
+        {
+            if (!validateImagePrefix())
+            {
+                setError("Invalid ESP32-S3 image");
+                return 0;
+            }
+            const esp_err_t beginResult = esp_ota_begin(
+                partition_, OTA_WITH_SEQUENTIAL_WRITES, &handle_);
+            if (beginResult != ESP_OK)
+            {
+                setError(esp_err_to_name(beginResult));
+                return 0;
+            }
+            handleActive_ = true;
+            const esp_err_t prefixWrite = esp_ota_write(
+                handle_, imagePrefix_.data(), imagePrefix_.size());
+            if (prefixWrite != ESP_OK)
+            {
+                setError(esp_err_to_name(prefixWrite));
+                return 0;
+            }
+            bytesWritten_ += imagePrefix_.size();
+        }
+    }
+
+    if (consumed < len && handleActive_)
+    {
+        const esp_err_t writeResult =
+            esp_ota_write(handle_, buf + consumed, len - consumed);
+        if (writeResult != ESP_OK)
+        {
+            setError(esp_err_to_name(writeResult));
+            return 0;
+        }
+        bytesWritten_ += len - consumed;
+    }
+    bytesReceived_ += len;
+    return len;
 }
 
 bool UpdateClass::end(bool)
 {
-    if (!running_)
+    if (!running_ || error_ || !handleActive_ ||
+        imagePrefixBytes_ != imagePrefix_.size() ||
+        bytesReceived_ == 0 || bytesReceived_ != bytesWritten_)
         return false;
     esp_err_t err = esp_ota_end(handle_);
+    handle_ = 0;
+    handleActive_ = false;
     running_ = false;
     if (err != ESP_OK)
     {
         setError(esp_err_to_name(err));
         return false;
     }
+    if (!verifyWrittenImage())
+        return false;
     err = esp_ota_set_boot_partition(partition_);
-    if (err != ESP_OK)
+    const esp_partition_t *selected = esp_ota_get_boot_partition();
+    if (err != ESP_OK || selected != partition_)
     {
-        setError(esp_err_to_name(err));
+        const esp_err_t restore =
+            bootPartitionBefore_ ? esp_ota_set_boot_partition(bootPartitionBefore_)
+                                 : ESP_FAIL;
+        if (restore != ESP_OK ||
+            esp_ota_get_boot_partition() != bootPartitionBefore_)
+            setError("Boot partition restore failed");
+        else
+            setError("Boot partition selection failed");
         return false;
     }
     finished_ = true;
@@ -893,12 +912,130 @@ bool UpdateClass::end(bool)
 
 void UpdateClass::abort()
 {
-    if (running_)
-        esp_ota_abort(handle_);
+    abortHandle();
     running_ = false;
     finished_ = false;
-    handle_ = 0;
     partition_ = nullptr;
+    runningPartition_ = nullptr;
+    bootPartitionBefore_ = nullptr;
+    imagePrefixBytes_ = 0;
+    bytesReceived_ = 0;
+    bytesWritten_ = 0;
+    imagePrefix_.fill(0);
+}
+
+void UpdateClass::abortHandle()
+{
+    if (handleActive_)
+        (void)esp_ota_abort(handle_);
+    handle_ = 0;
+    handleActive_ = false;
+}
+
+bool UpdateClass::prepareTargetPartition(size_t imageSize)
+{
+    runningPartition_ = esp_ota_get_running_partition();
+    if (!runningPartition_ ||
+        runningPartition_->type != ESP_PARTITION_TYPE_APP)
+    {
+        setError("No running app partition");
+        running_ = false;
+        return false;
+    }
+
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    if (boot != runningPartition_)
+    {
+        const esp_err_t align =
+            esp_ota_set_boot_partition(runningPartition_);
+        if (align != ESP_OK ||
+            esp_ota_get_boot_partition() != runningPartition_)
+        {
+            setError("Boot partition repair failed");
+            running_ = false;
+            return false;
+        }
+    }
+    bootPartitionBefore_ = runningPartition_;
+
+    partition_ =
+        esp_ota_get_next_update_partition(runningPartition_);
+    if (!partition_ || partition_ == runningPartition_ ||
+        partition_->type != ESP_PARTITION_TYPE_APP ||
+        partition_->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MIN ||
+        partition_->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MAX ||
+        partition_->size == 0)
+    {
+        setError("No valid inactive OTA partition");
+        running_ = false;
+        return false;
+    }
+    if (imageSize != UPDATE_SIZE_UNKNOWN &&
+        imageSize > partition_->size)
+    {
+        setError("Image exceeds OTA slot");
+        running_ = false;
+        return false;
+    }
+    return true;
+}
+
+bool UpdateClass::validateImagePrefix() const
+{
+    if (imagePrefixBytes_ != imagePrefix_.size())
+        return false;
+    esp_image_header_t imageHeader = {};
+    std::memcpy(&imageHeader, imagePrefix_.data(), sizeof(imageHeader));
+    if (imageHeader.magic != ESP_IMAGE_HEADER_MAGIC ||
+        imageHeader.chip_id != ESP_CHIP_ID_ESP32S3 ||
+        imageHeader.segment_count == 0 ||
+        imageHeader.segment_count > ESP_IMAGE_MAX_SEGMENTS)
+        return false;
+
+    esp_image_segment_header_t segmentHeader = {};
+    std::memcpy(
+        &segmentHeader,
+        imagePrefix_.data() + sizeof(imageHeader),
+        sizeof(segmentHeader));
+    if (segmentHeader.data_len < sizeof(esp_app_desc_t))
+        return false;
+
+    esp_app_desc_t description = {};
+    std::memcpy(
+        &description,
+        imagePrefix_.data() + sizeof(imageHeader) +
+            sizeof(segmentHeader),
+        sizeof(description));
+    return description.magic_word == ESP_APP_DESC_MAGIC_WORD;
+}
+
+bool UpdateClass::verifyWrittenImage()
+{
+    if (!partition_ || bytesReceived_ != bytesWritten_ ||
+        bytesWritten_ > partition_->size)
+    {
+        setError("OTA image size mismatch");
+        return false;
+    }
+    esp_image_header_t imageHeader = {};
+    if (esp_partition_read(
+            partition_, 0, &imageHeader, sizeof(imageHeader)) != ESP_OK ||
+        imageHeader.magic != ESP_IMAGE_HEADER_MAGIC ||
+        imageHeader.chip_id != ESP_CHIP_ID_ESP32S3 ||
+        imageHeader.segment_count == 0 ||
+        imageHeader.segment_count > ESP_IMAGE_MAX_SEGMENTS)
+    {
+        setError("OTA image header invalid");
+        return false;
+    }
+    esp_app_desc_t description = {};
+    if (esp_ota_get_partition_description(partition_, &description) != ESP_OK ||
+        description.magic_word != ESP_APP_DESC_MAGIC_WORD)
+    {
+        setError("OTA image descriptor invalid");
+        return false;
+    }
+    return true;
 }
 
 void WebServer::on(const char *uriValue, http_method methodValue, Handler handler)
