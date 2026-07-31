@@ -2,14 +2,14 @@ idf_component_register(
     SRCS
         "main.cpp"
         "espidf_runtime.cpp"
+        "ble_fsd_receiver.cpp"
     INCLUDE_DIRS
         "../include"
         ".."
     REQUIRES
         app_update
-        esp_http_client
+        bt
         esp_http_server
-        esp_https_ota
         esp_netif
         esp_wifi
         nvs_flash

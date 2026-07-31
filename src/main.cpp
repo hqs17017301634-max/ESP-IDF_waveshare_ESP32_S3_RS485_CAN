@@ -1,7 +1,6 @@
 /*
-    PlatformIO entry point.
-    Shared build settings live in platformio_profile.h.
-    Logic is in the shared headers under include/.
+    WIFI-NAG firmware entry point.
+    This product targets ESP32-S3 native TWAI CAN with the WebUI/DNS gateway.
 */
 
 #ifdef ESP_PLATFORM
@@ -11,34 +10,79 @@
 #else
 #include <Arduino.h>
 #endif
-#include "app.h"
 
-#ifdef DRIVER_MCP2515
-#include <SPI.h>
-#include "drivers/mcp2515_driver.h"
-#elif defined(DRIVER_ESP32_EXT_MCP2515)
-#ifndef ESP_PLATFORM
-#include <SPI.h>
-#endif
-#include "drivers/esp32_mcp2515_driver.h"
-#elif defined(DRIVER_SAME51)
-#include "drivers/same51_driver.h"
-#elif defined(DRIVER_TWAI)
+#include "app.h"
 #include "drivers/twai_driver.h"
-#ifndef ESP_PLATFORM
-#include <Preferences.h>
-#endif
+
 #ifndef TWAI_TX_PIN
-#define TWAI_TX_PIN GPIO_NUM_5
+#define TWAI_TX_PIN GPIO_NUM_15
 #endif
 #ifndef TWAI_RX_PIN
-#define TWAI_RX_PIN GPIO_NUM_4
-#endif
-#else
-#error "Define DRIVER_MCP2515, DRIVER_ESP32_EXT_MCP2515, DRIVER_SAME51, or DRIVER_TWAI in build_flags"
+#define TWAI_RX_PIN GPIO_NUM_16
 #endif
 
-#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI)
+#if defined(ESP_PLATFORM)
+static constexpr uint32_t APP_OTA_HEALTH_WINDOW_MS = 15000UL;
+static bool appOtaHealthObserving = false;
+static bool appOtaHealthDecided = false;
+static uint32_t appOtaHealthDeadlineMs = 0;
+
+static void appStartOtaHealthObservation()
+{
+    if (appOtaHealthDecided || appOtaHealthObserving)
+        return;
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+    if (!running ||
+        esp_ota_get_state_partition(running, &state) != ESP_OK ||
+        (state != ESP_OTA_IMG_NEW &&
+         state != ESP_OTA_IMG_PENDING_VERIFY))
+    {
+        appOtaHealthDecided = true;
+        return;
+    }
+
+    appOtaHealthObserving = true;
+    appOtaHealthDeadlineMs = millis() + APP_OTA_HEALTH_WINDOW_MS;
+    Serial.println("[OTA] Pending image health observation started");
+}
+
+static void appServiceOtaHealthObservation()
+{
+    if (!appOtaHealthObserving ||
+        static_cast<int32_t>(millis() - appOtaHealthDeadlineMs) < 0)
+        return;
+
+    appOtaHealthObserving = false;
+    appOtaHealthDecided = true;
+    CanDriverDiagnostics diagnostics = {};
+    const bool canHealthy =
+        appDriver &&
+        appDriver->getDiagnostics(diagnostics) &&
+        diagnostics.available &&
+        diagnostics.state == CanDriverState::Running &&
+        !diagnostics.safetyTripped;
+    if (!canHealthy)
+    {
+        Serial.println("[OTA] Pending image failed health observation; rollback");
+        (void)esp_ota_mark_app_invalid_rollback_and_reboot();
+        ESP.restart();
+        return;
+    }
+
+    const esp_err_t result = esp_ota_mark_app_valid_cancel_rollback();
+    if (result != ESP_OK)
+    {
+        Serial.printf("[OTA] Mark valid failed=%s; rollback\n",
+                      esp_err_to_name(result));
+        (void)esp_ota_mark_app_invalid_rollback_and_reboot();
+        ESP.restart();
+        return;
+    }
+    Serial.println("[OTA] Pending image marked valid");
+}
+
 static bool appTwaiGpioReserved(gpio_num_t pin)
 {
     int p = static_cast<int>(pin);
@@ -47,106 +91,56 @@ static bool appTwaiGpioReserved(gpio_num_t pin)
         return true; // embedded flash/PSRAM bus on ESP32-S3 modules
     if (p == 45 || p == 46)
         return true; // strapping/input-only pins
-#elif defined(CONFIG_IDF_TARGET_ESP32)
-#if !defined(DASH_ALLOW_CAN_GPIO_6_11) || !DASH_ALLOW_CAN_GPIO_6_11
-    if (p >= 6 && p <= 11)
-        return true; // SPI flash pins on common ESP32 modules
-#endif
 #endif
     return false;
 }
 
 static bool appTwaiGpioValid(gpio_num_t pin, bool tx)
 {
-    int p = static_cast<int>(pin);
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-    constexpr int kMaxGpio = 48;
-#else
-    constexpr int kMaxGpio = 39;
-#endif
-    if (p < 0 || p > kMaxGpio || appTwaiGpioReserved(pin))
-        return false;
-#if defined(CONFIG_IDF_TARGET_ESP32)
-    if (tx && p >= 34 && p <= 39)
-        return false; // input-only pins cannot drive TWAI TX
-#else
     (void)tx;
-#endif
-    return true;
+    int p = static_cast<int>(pin);
+    return p >= 0 && p <= 48 && !appTwaiGpioReserved(pin);
 }
 #endif
 
 static void app_main_setup()
 {
-#ifdef DRIVER_MCP2515
-    appSetup<MCP2515Driver>(std::make_unique<MCP2515Driver>(PIN_CAN_CS), "MCP25625 ready @ 500k");
-#ifdef ESP32_DASHBOARD
-    mcpDashboardSetup(appHandler.get(), appDriver.get());
-#endif
-#elif defined(DRIVER_ESP32_EXT_MCP2515)
-#ifndef ESP_PLATFORM
-    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, PIN_CAN_CS);
-    SPI.setFrequency(8000000);
-#endif
-    auto drv = std::make_unique<ESP32_MCP2515Driver>(PIN_CAN_CS);
-    MCP2515 *mcpPtr = &drv->mcp();
-    appSetup<ESP32_MCP2515Driver>(std::move(drv), "ESP32 + MCP2515 ready @ 500k");
-#ifdef ESP32_DASHBOARD
-    mcpDashboardSetup(appHandler.get(), appDriver.get(), mcpPtr);
-#endif
-#elif defined(DRIVER_SAME51)
-    appSetup<SAME51Driver>(std::make_unique<SAME51Driver>(), "SAME51 CAN ready @ 500k");
-#elif defined(DRIVER_TWAI)
-    // Load TWAI pins from NVS (survives OTA); fall back to compile-time defaults
     gpio_num_t twaiTx = TWAI_TX_PIN;
     gpio_num_t twaiRx = TWAI_RX_PIN;
+
+#if defined(ESP_PLATFORM)
+    Preferences canPrefs;
+    if (canPrefs.begin("can", false))
     {
-        Preferences canPrefs;
-        if (canPrefs.begin("can", false))
+        int8_t tx = canPrefs.getChar("tx", -1);
+        int8_t rx = canPrefs.getChar("rx", -1);
+        canPrefs.end();
+        if (appTwaiGpioValid((gpio_num_t)tx, true) &&
+            appTwaiGpioValid((gpio_num_t)rx, false) &&
+            tx != rx)
         {
-            int8_t tx = canPrefs.getChar("tx", -1);
-            int8_t rx = canPrefs.getChar("rx", -1);
-            canPrefs.end();
-            if (appTwaiGpioValid((gpio_num_t)tx, true) && appTwaiGpioValid((gpio_num_t)rx, false) && tx != rx)
-            {
-                twaiTx = (gpio_num_t)tx;
-                twaiRx = (gpio_num_t)rx;
-            }
+            twaiTx = (gpio_num_t)tx;
+            twaiRx = (gpio_num_t)rx;
         }
     }
-    appSetup<TWAIDriver>(std::make_unique<TWAIDriver>(twaiTx, twaiRx), "ESP32 TWAI ready @ 500k");
+#endif
+
+    appSetup<TWAIDriver>(std::make_unique<TWAIDriver>(twaiTx, twaiRx), "ESP32-S3 TWAI WIFI-NAG ready @ 500k");
 #ifdef ESP32_DASHBOARD
     mcpDashboardSetup(appHandler.get(), appDriver.get());
-#endif
 #endif
 }
 
 static bool app_main_loop()
 {
-#ifdef DRIVER_MCP2515
-    bool processed = appLoop<MCP2515Driver>();
-#ifdef ESP32_DASHBOARD
-    mcpDashboardLoop();
-#endif
-    return processed;
-#elif defined(DRIVER_ESP32_EXT_MCP2515)
-    bool processed = appLoop<ESP32_MCP2515Driver>();
-#ifdef ESP32_DASHBOARD
-    mcpDashboardLoop();
-#endif
-    return processed;
-#elif defined(DRIVER_SAME51)
-    return appLoop<SAME51Driver>();
-#elif defined(DRIVER_TWAI)
     bool processed = appLoop<TWAIDriver>();
 #ifdef ESP32_DASHBOARD
     mcpDashboardLoop();
 #endif
     return processed;
-#endif
 }
 
-#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI)
+#if defined(ESP_PLATFORM)
 #ifndef APP_CAN_TASK_STACK
 #define APP_CAN_TASK_STACK 6144
 #endif
@@ -185,9 +179,7 @@ static bool app_start_can_task()
     appCanTaskDedicated = ok == pdPASS;
     return ok == pdPASS;
 }
-#endif
 
-#ifdef ESP_PLATFORM
 extern "C" void app_main(void)
 {
     esp_err_t nvsErr = nvs_flash_init();
@@ -199,10 +191,11 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(nvsErr);
 
     app_main_setup();
-#if defined(DRIVER_TWAI)
     bool canTaskStarted = app_start_can_task();
+    appStartOtaHealthObservation();
     while (true)
     {
+        appServiceOtaHealthObservation();
         if (!canTaskStarted)
         {
             if (!app_main_loop())
@@ -214,22 +207,21 @@ extern "C" void app_main(void)
 #endif
         vTaskDelay(1);
     }
-#else
-    while (true)
-    {
-        if (!app_main_loop())
-            vTaskDelay(1);
-    }
-#endif
 }
 #else
 void setup()
 {
     app_main_setup();
+#if defined(ESP_PLATFORM)
+    appStartOtaHealthObservation();
+#endif
 }
 
 void loop()
 {
+#if defined(ESP_PLATFORM)
+    appServiceOtaHealthObservation();
+#endif
     app_main_loop();
 }
 #endif

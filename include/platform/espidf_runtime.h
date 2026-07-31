@@ -3,6 +3,7 @@
 #ifdef ESP_PLATFORM
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -18,8 +19,8 @@
 
 #include <driver/gpio.h>
 #include <esp_app_desc.h>
+#include <esp_app_format.h>
 #include <esp_event.h>
-#include <esp_http_client.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_netif.h>
@@ -56,17 +57,6 @@
 #endif
 #ifndef INPUT_PULLUP
 #define INPUT_PULLUP 2
-#endif
-
-#ifndef HTTP_CODE_OK
-#define HTTP_CODE_OK 200
-#endif
-
-#ifndef HTTPC_STRICT_FOLLOW_REDIRECTS
-#define HTTPC_STRICT_FOLLOW_REDIRECTS 1
-#endif
-#ifndef HTTPC_FORCE_FOLLOW_REDIRECTS
-#define HTTPC_FORCE_FOLLOW_REDIRECTS 2
 #endif
 
 #ifndef WIFI_AP
@@ -460,51 +450,11 @@ private:
 
 extern WiFiClass WiFi;
 
-class WiFiClient
-{
-public:
-    WiFiClient() = default;
-    explicit WiFiClient(std::string data) : data_(std::move(data)) {}
-    size_t readBytes(uint8_t *buf, size_t len);
-    bool connected() const { return offset_ < data_.size(); }
-
-private:
-    std::string data_;
-    size_t offset_ = 0;
-};
-
-class WiFiClientSecure : public WiFiClient
-{
-public:
-    void setInsecure() {}
-};
-
-class HTTPClient
-{
-public:
-    bool begin(WiFiClientSecure &, const String &url);
-    void setFollowRedirects(int) {}
-    void setTimeout(uint32_t ms) { timeoutMs_ = ms; }
-    void addHeader(const char *, const char *) {}
-    int GET();
-    String getString() const { return response_; }
-    int getSize() const { return response_.length(); }
-    WiFiClient *getStreamPtr();
-    void end();
-
-private:
-    String url_;
-    String response_;
-    WiFiClient stream_;
-    uint32_t timeoutMs_ = 15000;
-};
-
 class UpdateClass
 {
 public:
     bool begin(size_t size);
     size_t write(const uint8_t *buf, size_t len);
-    size_t writeStream(WiFiClient &stream);
     bool end(bool evenIfRemaining = false);
     void abort();
     bool hasError() const { return error_; }
@@ -513,11 +463,27 @@ public:
     bool isFinished() const { return finished_; }
 
 private:
+    static constexpr size_t kImagePrefixSize =
+        sizeof(esp_image_header_t) +
+        sizeof(esp_image_segment_header_t) +
+        sizeof(esp_app_desc_t);
+
     void setError(const char *message);
+    bool prepareTargetPartition(size_t imageSize);
+    bool validateImagePrefix() const;
+    bool verifyWrittenImage();
+    void abortHandle();
 
     const esp_partition_t *partition_ = nullptr;
+    const esp_partition_t *runningPartition_ = nullptr;
+    const esp_partition_t *bootPartitionBefore_ = nullptr;
     esp_ota_handle_t handle_ = 0;
+    std::array<uint8_t, kImagePrefixSize> imagePrefix_ = {};
+    size_t imagePrefixBytes_ = 0;
+    size_t bytesReceived_ = 0;
+    size_t bytesWritten_ = 0;
     bool running_ = false;
+    bool handleActive_ = false;
     bool finished_ = false;
     bool error_ = false;
     std::string errorText_;
