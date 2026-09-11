@@ -1,5 +1,9 @@
 ﻿# T-2CAN / EVtools ESP32-S3 CAN Dashboard
 
+当前 `codex/s3-rx-coordinator` 分支已将 CAN 业务修改接入逐 RX 字段合并与统一提交。
+范围、来源和验证方法见 [S3 字段意图移植说明](docs/migration/s3-field-intent.md)。
+下方保留的 DEV 说明包含历史功能，请以当前源码及分支移植说明为准。
+
 > DEV branch README for the Waveshare ESP32-S3 RS485/CAN build.  
 > This repository is a local vehicle-CAN research firmware with WebUI, OTA, AP+STA+NAPT gateway, Tesla DNS filtering, and dashboard diagnostics.
 

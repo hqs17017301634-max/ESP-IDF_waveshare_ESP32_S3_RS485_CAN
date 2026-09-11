@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,7 +25,7 @@ class PlatformioSetProfileTest(unittest.TestCase):
 
             subprocess.run(
                 [
-                    "python3",
+                    sys.executable,
                     str(ROOT / "scripts" / "platformio_set_profile.py"),
                     "--driver",
                     "DRIVER_TWAI",
@@ -52,7 +53,7 @@ class PlatformioSetProfileTest(unittest.TestCase):
 
             result = subprocess.run(
                 [
-                    "python3",
+                    sys.executable,
                     str(ROOT / "scripts" / "platformio_set_profile.py"),
                     "--driver",
                     "DRIVER_TWAI",

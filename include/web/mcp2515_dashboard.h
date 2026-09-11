@@ -607,7 +607,7 @@ static void mcpDashOnFrame(const CanFrame &f)
 
 static void mcpDashOnTxFrame(const CanFrame &frame, bool ok)
 {
-    txCount++;
+    if (ok) txCount++; // driver acceptance only; rejected requests are txErrCount
     int8_t mux = dashFrameMux(frame);
     if (!ok)
     {
@@ -1195,38 +1195,13 @@ static void dashSleepObserveFrame(const CanFrame &frame)
     }
 }
 
-static void dashPostProcessFrame(const CanFrame &original, CanDriver &driver)
+static void dashCollectPostIntents(CarManagerBase &handler, const CanFrame &original, FrameCoordinator &plan)
 {
     dashSleepObserveFrame(original);
-    if (dashSleepActive)
-        return;
-#if defined(DASH_FSD_252_COMPAT) && DASH_FSD_252_COMPAT
-    if ((hwMode != 0 && hwMode != 1) || !dashInjectionActive())
-        return;
-    const uint32_t activationId = hwMode == 0 ? 1006 : 1021;
-    if (original.id != activationId || original.dlc < 8 || readMuxID(original) != 0)
-        return;
-
-    CanFrame modified = original;
-    if (dashHandler && !(bool)dashHandler->speedProfileAuto)
-        setSpeedProfileV12V13(modified, (int)dashHandler->speedProfile);
-    setBit(modified, 46, true);
-    if (!framePayloadChanged(original, modified))
-        return;
-
-    if (dashHandler)
-        dashHandler->framesSent++;
-    bool ok = driver.sendCritical(modified);
-    if (ok)
-        lastInjectMs = millis();
-    if (dashHandler && dashHandler->onSend)
-        dashHandler->onSend(0, ok);
-#else
-    (void)original;
-    (void)driver;
-#endif
+    if (dashSleepActive) return;
+    collectFsdCompatibility(handler, plan,
+        canActive && (!apInjectionGate || handler.injectionGateOpen()));
 }
-
 static bool dashCheckNagDisabled()
 {
     return false;
@@ -2011,6 +1986,10 @@ static void handleStatus()
     j += hw3OffsetTargetRaw;
     j += ",\"hw3OffsetLast\":";
     j += hw3OffsetLastRaw;
+    j += ",\"hw3OffsetQueueKnown\":";
+    j += hw3OffsetHasQueued ? "true" : "false";
+    j += ",\"hw3OffsetQueuedAtMs\":";
+    j += hw3OffsetLastQueuedMs;
     j += ",\"hw3SlewCount\":";
     j += hw3OffsetSlewCount;
     // HW3 custom speed-limit boost
@@ -2073,6 +2052,24 @@ static void handleStatus()
     j += txCount;
     j += ",\"txerr\":";
     j += txErrCount;
+    j += ",\"txSemantics\":\"driver_accepted\",\"perFrameTxDoneKnown\":false";
+    j += ",\"coordinator\":{\"composed\":";
+    j += (uint32_t)appTxBroker.diagnostics.composed;
+    j += ",\"accepted\":";
+    j += (uint32_t)appTxBroker.diagnostics.accepted;
+    j += ",\"rejected\":";
+    j += (uint32_t)appTxBroker.diagnostics.rejected;
+    j += ",\"duplicate\":";
+    j += (uint32_t)appTxBroker.diagnostics.duplicate;
+    j += ",\"noIntent\":";
+    j += (uint32_t)appTxBroker.diagnostics.noIntent;
+    j += ",\"noChange\":";
+    j += (uint32_t)appTxBroker.diagnostics.noChange;
+    j += ",\"invalid\":";
+    j += (uint32_t)appTxBroker.diagnostics.invalid;
+    j += ",\"conflict\":";
+    j += (uint32_t)appTxBroker.diagnostics.conflict;
+    j += ",\"timeBasis\":\"software_dequeue\"}";
     j += ",\"fd\":";
     j += followDist;
     j += ",\"fps\":";

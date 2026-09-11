@@ -1,3 +1,4 @@
+#include "../frame_test_dispatch.h"
 #include <unity.h>
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
@@ -24,7 +25,7 @@ void test_hw3_follow_distance_1_sets_profile_2()
 {
     CanFrame f = {.id = 1016};
     f.data[5] = 0b00100000; // followDistance = 1
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(2, handler.speedProfile);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
@@ -33,7 +34,7 @@ void test_hw3_follow_distance_2_sets_profile_1()
 {
     CanFrame f = {.id = 1016};
     f.data[5] = 0b01000000; // followDistance = 2
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(1, handler.speedProfile);
 }
 
@@ -41,7 +42,7 @@ void test_hw3_follow_distance_3_sets_profile_0()
 {
     CanFrame f = {.id = 1016};
     f.data[5] = 0b01100000; // followDistance = 3
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(0, handler.speedProfile);
 }
 
@@ -49,7 +50,7 @@ void test_hw3_follow_distance_0_keeps_default()
 {
     CanFrame f = {.id = 1016};
     f.data[5] = 0x00; // followDistance = 0
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(1, handler.speedProfile); // default
 }
 
@@ -60,7 +61,7 @@ void test_hw3_manual_profile_ignores_follow_distance()
 
     CanFrame f = {.id = 1016};
     f.data[5] = 0b00100000; // followDistance = 1 would map to profile 2
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL_INT(1, handler.speedProfile);
     TEST_ASSERT_FALSE(handler.speedProfileAuto);
@@ -70,7 +71,7 @@ void test_hw3_follow_distance_profile_survives_mux0_without_injection()
 {
     CanFrame followDistanceFrame = {.id = 1016};
     followDistanceFrame.data[5] = 0b00100000; // followDistance = 1 => profile 2
-    handler.handleMessage(followDistanceFrame, mock);
+    dispatchTestFrame(handler, followDistanceFrame, mock);
     TEST_ASSERT_EQUAL_INT(2, handler.speedProfile);
 
     mock.reset();
@@ -79,7 +80,7 @@ void test_hw3_follow_distance_profile_survives_mux0_without_injection()
     autopilotFrame.data[4] = 0x20; // AD selected
     autopilotFrame.data[3] = 60;   // speed offset = 0
     autopilotFrame.data[6] = 0x02;
-    handler.handleMessage(autopilotFrame, mock);
+    dispatchTestFrame(handler, autopilotFrame, mock);
 
     TEST_ASSERT_EQUAL_INT(0, handler.speedOffset);
     TEST_ASSERT_EQUAL_INT(2, handler.speedProfile);
@@ -94,14 +95,14 @@ void test_hw3_AD_enabled_only_set_on_mux0()
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00; // mux 0
     f0.data[4] = 0x20; // AD selected
-    handler.handleMessage(f0, mock);
+    dispatchTestFrame(handler, f0, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
 
     mock.reset();
     CanFrame f2 = {.id = 1021};
     f2.data[0] = 0x02; // mux 2
     f2.data[4] = 0x00; // AD bit not set in this frame
-    handler.handleMessage(f2, mock);
+    dispatchTestFrame(handler, f2, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
@@ -112,13 +113,13 @@ void test_hw3_AD_disabled_on_mux0_prevents_mux2_send()
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00;
     f0.data[4] = 0x00; // AD NOT selected
-    handler.handleMessage(f0, mock);
+    dispatchTestFrame(handler, f0, mock);
     TEST_ASSERT_FALSE(handler.ADEnabled);
 
     mock.reset();
     CanFrame f2 = {.id = 1021};
     f2.data[0] = 0x02;
-    handler.handleMessage(f2, mock);
+    dispatchTestFrame(handler, f2, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
@@ -129,7 +130,7 @@ void test_hw3_AD_mux0_sends_with_bit46()
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
     f.data[4] = 0x20;
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
 }
@@ -146,7 +147,7 @@ void test_hw3_recorded_ap_mux0_enables_ad()
     f.data[6] = 0x01;
     f.data[7] = 0x80;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_TRUE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -157,7 +158,7 @@ void test_hw3_das_status_available_does_not_mark_ap_active()
     CanFrame f = {.id = 921};
     f.data[0] = 0x02; // AVAILABLE
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_FALSE(handler.APActive);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -168,7 +169,7 @@ void test_hw3_das_status_active_marks_ap_active()
     CanFrame f = {.id = 921};
     f.data[0] = 0x03; // ACTIVE_1
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_TRUE(handler.APActive);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -180,7 +181,7 @@ void test_hw3_gear_park_marks_parked()
     f.dlc = 8;
     f.data[7] = static_cast<uint8_t>(1U << 3);
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_TRUE(handler.Parked);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -193,7 +194,7 @@ void test_hw3_gear_drive_clears_parked()
     f.dlc = 8;
     f.data[7] = static_cast<uint8_t>(4U << 3);
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_FALSE(handler.Parked);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -206,25 +207,25 @@ void test_hw3_nag_suppression_clears_bit19_on_mux1()
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     setBit(f, 19, true);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01);
 }
 
-void test_hw3_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled()
+void test_hw3_builtin_mux1_survives_eap_runtime_disabled()
 {
     enhancedAutopilotRuntime = false;
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     setBit(f, 19, true);
-    handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size()); // frame are not sent when runtime disabled
+    dispatchTestFrame(handler, f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size()); // existing builtin path is independent of optional EAP
 }
 void test_hw3_mux1_does_not_set_track_labels_bit46()
 {
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[5] & 0x40);
 }
@@ -234,7 +235,7 @@ void test_hw3_mux1_does_not_set_track_labels_bit46()
 void test_hw3_ignores_unrelated_can_id()
 {
     CanFrame f = {.id = 999};
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
@@ -243,7 +244,7 @@ void test_hw3_gw_autopilot_mux2_updates_state_without_send()
     CanFrame f = {.id = 2047};
     f.data[0] = 0x02;
     f.data[5] = 0x08; // ENHANCED = 2
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(2, handler.gatewayAutopilot);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
@@ -255,7 +256,7 @@ void test_hw3_AD_enabled_mux0_sends_exactly_1()
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
     f.data[4] = 0x20;
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
@@ -263,7 +264,7 @@ void test_hw3_mux1_sends_exactly_1()
 {
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
@@ -331,7 +332,7 @@ int main()
     RUN_TEST(test_hw3_gear_park_marks_parked);
     RUN_TEST(test_hw3_gear_drive_clears_parked);
     RUN_TEST(test_hw3_nag_suppression_clears_bit19_on_mux1);
-    RUN_TEST(test_hw3_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled);
+    RUN_TEST(test_hw3_builtin_mux1_survives_eap_runtime_disabled);
     RUN_TEST(test_hw3_mux1_does_not_set_track_labels_bit46);
     RUN_TEST(test_hw3_ignores_unrelated_can_id);
     RUN_TEST(test_hw3_gw_autopilot_mux2_updates_state_without_send);

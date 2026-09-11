@@ -1,0 +1,14 @@
+PLATFORM: Espressif 32 (7.0.0) > Espressif ESP32-S3-Box
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 16MB Flash
+ - framework-espidf @ 4.60001.0 (6.0.1)
+ - toolchain-esp32ulp @ 1.23800.240113 (2.38.0)
+ - toolchain-riscv32-esp @ 15.2.0+20251204
+ - toolchain-xtensa-esp-elf @ 15.2.0+20251204
+C:/Users/Administrator/Desktop/FSD-CAN/AAA-ESP32S3/idf_webui_build_ascii/include/web/mcp2515_dashboard.h:2548:15: warning: 'String dashFrameDataHex(const CanFrame&)' defined but not used [-Wunused-function]
+C:/Users/Administrator/Desktop/FSD-CAN/AAA-ESP32S3/idf_webui_build_ascii/include/web/mcp2515_dashboard.h:2535:15: warning: 'String dashFrameDataJson(const CanFrame&)' defined but not used [-Wunused-function]
+C:/Users/Administrator/Desktop/FSD-CAN/AAA-ESP32S3/idf_webui_build_ascii/include/web/mcp2515_dashboard.h:1018:13: warning: 'bool dashSleepDriverClearReady()' defined but not used [-Wunused-function]
+C:/Users/Administrator/Desktop/FSD-CAN/AAA-ESP32S3/idf_webui_build_ascii/include/web/mcp2515_dashboard.h:383:13: warning: 'void dashReleaseRecBuffer()' defined but not used [-Wunused-function]
+RAM:   [==        ]  15.9% (used 51968 bytes from 327680 bytes)
+Flash: [===       ]  26.4% (used 1108439 bytes from 4194304 bytes)
+========================= [SUCCESS] Took 18.50 seconds =========================
+waveshare_ESP32_S3_RS485_CAN  SUCCESS   00:00:18.497

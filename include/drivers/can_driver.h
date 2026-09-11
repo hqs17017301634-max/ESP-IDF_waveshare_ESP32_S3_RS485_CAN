@@ -15,6 +15,7 @@ struct CanDriver
         uint32_t busOff = 0;
         uint32_t recoverCount = 0;
         uint32_t softwareFiltered = 0;
+        uint32_t invalidRx = 0;
         uint32_t lastLoopGapUs = 0;
         uint32_t maxLoopGapUs = 0;
         uint32_t hardwareAcceptedIds = 0;

@@ -1,3 +1,4 @@
+#include "../frame_test_dispatch.h"
 #include <unity.h>
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
@@ -33,7 +34,7 @@ void test_legacy_stalk_pos0_sets_profile_2()
 {
     CanFrame f = {.id = 69};
     f.data[1] = 0x00; // pos = 0 >> 5 = 0
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(2, handler.speedProfile);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
@@ -42,7 +43,7 @@ void test_legacy_stalk_pos1_sets_profile_2()
 {
     CanFrame f = {.id = 69};
     f.data[1] = 0x21; // pos = 0x21 >> 5 = 1
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(2, handler.speedProfile);
 }
 
@@ -50,7 +51,7 @@ void test_legacy_stalk_pos2_sets_profile_1()
 {
     CanFrame f = {.id = 69};
     f.data[1] = 0x42; // pos = 0x42 >> 5 = 2
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(1, handler.speedProfile);
 }
 
@@ -58,7 +59,7 @@ void test_legacy_stalk_pos3_sets_profile_0()
 {
     CanFrame f = {.id = 69};
     f.data[1] = 0x64; // pos = 0x64 >> 5 = 3
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_INT(0, handler.speedProfile);
 }
 
@@ -69,7 +70,7 @@ void test_legacy_manual_profile_ignores_stalk_position()
 
     CanFrame f = {.id = 69};
     f.data[1] = 0x00; // would map to profile 2
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL_INT(1, handler.speedProfile);
     TEST_ASSERT_FALSE(handler.speedProfileAuto);
@@ -82,7 +83,7 @@ void test_legacy_AD_enabled_on_mux0()
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00; // mux 0
     f.data[4] = 0x20; // AD bit set
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
@@ -92,7 +93,7 @@ void test_legacy_no_send_when_AD_disabled()
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00; // mux 0
     f.data[4] = 0x00; // AD bit NOT set
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_FALSE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
@@ -102,7 +103,7 @@ void test_legacy_AD_sets_bit46()
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
     f.data[4] = 0x20;
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
 }
@@ -114,7 +115,7 @@ void test_legacy_AD_applies_selected_speed_profile_bits()
     f.data[0] = 0x00;
     f.data[4] = 0x20;
     f.data[6] = 0x02;
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
 }
 
@@ -125,7 +126,7 @@ void test_legacy_checkAD_blocks_mux0_send()
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
     f.data[4] = 0x20;
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_FALSE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
@@ -137,7 +138,7 @@ void test_legacy_nag_suppression_clears_bit19_on_mux1()
     CanFrame f = {.id = 1006};
     f.data[0] = 0x01;    // mux 1
     setBit(f, 19, true); // pre-set nag bit
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01);
 }
@@ -149,7 +150,7 @@ void test_legacy_checkNag_blocks_mux1_send()
     CanFrame f = {.id = 1006};
     f.data[0] = 0x01;
     setBit(f, 19, true);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
@@ -158,7 +159,7 @@ void test_legacy_checkNag_blocks_mux1_send()
 void test_legacy_ignores_unrelated_can_id()
 {
     CanFrame f = {.id = 999};
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 

@@ -21,4 +21,6 @@ struct CanFrame
     uint8_t dlc = 8;
     uint8_t data[8] = {};
     uint8_t bus = CAN_BUS_ANY;
+    bool extended = false;
+    bool remote = false;
 };

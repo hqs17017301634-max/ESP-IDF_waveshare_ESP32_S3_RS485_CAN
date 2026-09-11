@@ -1,3 +1,4 @@
+#include "../frame_test_dispatch.h"
 #include <unity.h>
 #include "can_frame_types.h"
 #include "can_helpers.h"
@@ -32,7 +33,7 @@ void setUp()
 
 void tearDown() {}
 
-void test_dashboard_legacy_mux0_observes_ad_without_injecting()
+void test_dashboard_legacy_builtin_mux0_requests_ad_preserving_source()
 {
     LegacyHandler handler;
     prepareDashboardHandler(handler);
@@ -41,12 +42,13 @@ void test_dashboard_legacy_mux0_observes_ad_without_injecting()
     f.data[0] = 0x00;
     f.data[4] = 0x20;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_TRUE(handler.ADEnabled);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
-    TEST_ASSERT_EQUAL_UINT8(0, onSendCount);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
+    TEST_ASSERT_EQUAL_UINT8(1, onSendCount);
+    TEST_ASSERT_EQUAL_HEX8(0x43, mock.sent[0].data[5] & 0x43);
     TEST_ASSERT_EQUAL_HEX8(0x00, f.data[5] & 0x40);
 }
 
@@ -61,7 +63,7 @@ void test_dashboard_legacy_manual_profile_injects_mux0()
     f.data[0] = 0x00;
     f.data[4] = 0x20;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
@@ -76,7 +78,7 @@ void test_dashboard_legacy_mux1_does_not_inject_nag_suppression()
     f.data[0] = 0x01;
     setBit(f, 19, true);
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
@@ -94,7 +96,7 @@ void test_dashboard_hw3_mux0_injects_stable_activation()
     f.data[3] = 60;
     f.data[4] = 0x20;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_TRUE(handler.ADEnabled);
     TEST_ASSERT_EQUAL_INT(0, handler.speedOffset);
@@ -116,7 +118,7 @@ void test_dashboard_hw3_manual_profile_injects_mux0()
     f.data[0] = 0x00;
     f.data[4] = 0x20;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
@@ -133,7 +135,7 @@ void test_dashboard_hw3_ui_bit_clear_does_not_inject_builtin_activation()
     f.data[0] = 0x00;
     f.data[4] = 0x00;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_FALSE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -148,7 +150,7 @@ void test_dashboard_hw3_mux1_injects_nag_clear()
     f.data[0] = 0x01;
     setBit(f, 19, true);
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
@@ -156,7 +158,7 @@ void test_dashboard_hw3_mux1_injects_nag_clear()
     TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01);
 }
 
-void test_dashboard_hw4_mux0_observes_ad_without_injecting()
+void test_dashboard_hw4_mux0_requests_ad_preserving_source()
 {
     HW4Handler handler;
     prepareDashboardHandler(handler);
@@ -165,12 +167,14 @@ void test_dashboard_hw4_mux0_observes_ad_without_injecting()
     f.data[0] = 0x00;
     f.data[4] = 0x20;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_TRUE(handler.ADEnabled);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
-    TEST_ASSERT_EQUAL_UINT8(0, onSendCount);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
+    TEST_ASSERT_EQUAL_UINT8(1, onSendCount);
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
+    TEST_ASSERT_EQUAL_HEX8(0x10, mock.sent[0].data[7] & 0x10);
     TEST_ASSERT_EQUAL_HEX8(0x00, f.data[5] & 0x40);
     TEST_ASSERT_EQUAL_HEX8(0x00, f.data[7] & 0x18);
 }
@@ -187,7 +191,7 @@ void test_dashboard_hw4_manual_profile_injects_mux2()
     f.data[0] = 0x02;
     f.data[7] = 0x70;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[7] & 0x70);
@@ -202,7 +206,7 @@ void test_dashboard_hw4_mux1_does_not_inject_nag_suppression()
     f.data[0] = 0x01;
     setBit(f, 19, true);
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
@@ -219,7 +223,7 @@ void test_dashboard_hw4_isa_suppression_does_not_inject()
     CanFrame f = {.id = 921};
     f.data[1] = 0x00;
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(0, handler.framesSent);
@@ -231,14 +235,14 @@ int main()
 {
     UNITY_BEGIN();
 
-    RUN_TEST(test_dashboard_legacy_mux0_observes_ad_without_injecting);
+    RUN_TEST(test_dashboard_legacy_builtin_mux0_requests_ad_preserving_source);
     RUN_TEST(test_dashboard_legacy_manual_profile_injects_mux0);
     RUN_TEST(test_dashboard_legacy_mux1_does_not_inject_nag_suppression);
     RUN_TEST(test_dashboard_hw3_mux0_injects_stable_activation);
     RUN_TEST(test_dashboard_hw3_manual_profile_injects_mux0);
     RUN_TEST(test_dashboard_hw3_ui_bit_clear_does_not_inject_builtin_activation);
     RUN_TEST(test_dashboard_hw3_mux1_injects_nag_clear);
-    RUN_TEST(test_dashboard_hw4_mux0_observes_ad_without_injecting);
+    RUN_TEST(test_dashboard_hw4_mux0_requests_ad_preserving_source);
     RUN_TEST(test_dashboard_hw4_manual_profile_injects_mux2);
     RUN_TEST(test_dashboard_hw4_mux1_does_not_inject_nag_suppression);
     RUN_TEST(test_dashboard_hw4_isa_suppression_does_not_inject);

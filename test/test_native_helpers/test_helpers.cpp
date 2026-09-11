@@ -111,11 +111,11 @@ void test_isADSelectedInUI_ignores_other_bits()
     TEST_ASSERT_FALSE(isADSelectedInUI(f));
 }
 
-void test_isADSelectedInUI_true_when_bit6_set()
+void test_isADSelectedInUI_ignores_bit6()
 {
     CanFrame f = {};
     f.data[4] = 0x40; // bit 6 set
-    TEST_ASSERT_TRUE(isADSelectedInUI(f));
+    TEST_ASSERT_FALSE(isADSelectedInUI(f));
 }
 
 void test_isADSelectedInUI_true_with_other_bits()
@@ -265,11 +265,11 @@ void test_ui_bit5_still_reads_real_bit()
     TEST_ASSERT_TRUE(isADSelectedInUI(f));
 }
 
-void test_ui_bit6_still_reads_real_bit()
+void test_ui_bit6_is_not_selection_bit()
 {
     CanFrame f = {};
     f.data[4] = 0x40;
-    TEST_ASSERT_TRUE(isADSelectedInUI(f));
+    TEST_ASSERT_FALSE(isADSelectedInUI(f));
 }
 
 void test_runtime_defaults_start_disabled()
@@ -298,7 +298,7 @@ int main()
     RUN_TEST(test_isADSelectedInUI_true_when_bit5_set);
     RUN_TEST(test_isADSelectedInUI_false_when_bit5_clear);
     RUN_TEST(test_isADSelectedInUI_ignores_other_bits);
-    RUN_TEST(test_isADSelectedInUI_true_when_bit6_set);
+    RUN_TEST(test_isADSelectedInUI_ignores_bit6);
     RUN_TEST(test_isADSelectedInUI_true_with_other_bits);
     RUN_TEST(test_readGTWAutopilot_extracts_bits_42_to_44);
     RUN_TEST(test_readGTWAutopilot_masks_other_bits);
@@ -320,7 +320,7 @@ int main()
 
     RUN_TEST(test_ui_bit_clear_reads_frame_as_false);
     RUN_TEST(test_ui_bit5_still_reads_real_bit);
-    RUN_TEST(test_ui_bit6_still_reads_real_bit);
+    RUN_TEST(test_ui_bit6_is_not_selection_bit);
     RUN_TEST(test_runtime_defaults_start_disabled);
 
     return UNITY_END();

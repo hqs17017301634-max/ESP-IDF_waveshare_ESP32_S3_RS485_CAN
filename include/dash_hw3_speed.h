@@ -197,8 +197,12 @@ inline constexpr uint8_t kHw3SlewRateDefault = 25;
 inline bool hw3OffsetSlew = false;
 inline uint8_t hw3SlewRate = kHw3SlewRateDefault;
 inline uint8_t hw3OffsetTargetRaw = 0;
-inline uint8_t hw3OffsetLastRaw = 0;
-inline uint32_t hw3OffsetLastSentMs = 0;
+inline uint8_t hw3OffsetLastQueuedRaw = 0;
+inline uint32_t hw3OffsetLastQueuedMs = 0;
+inline bool hw3OffsetHasQueued = false;
+// Compatibility names for existing status consumers; these mean queue acceptance.
+inline uint8_t &hw3OffsetLastRaw = hw3OffsetLastQueuedRaw;
+inline uint32_t &hw3OffsetLastSentMs = hw3OffsetLastQueuedMs;
 inline uint32_t hw3OffsetSlewCount = 0;
 
 inline uint8_t dashClampHw3SlewRate(int rate)
@@ -218,7 +222,7 @@ inline uint8_t dashLoadHw3SlewRate(uint8_t rate)
 // Reads the current raw offset out of `modified`, records it as the active
 // target, and (when hw3OffsetSlew is enabled) clamps any decrease to
 // kHw3SlewRate*4 raw-units/sec. Returns true if the value was modified.
-inline bool dashApplyHw3OffsetSlew(CanFrame &modified, const CanFrame & /*original*/)
+inline bool dashApplyHw3OffsetSlew(CanFrame &modified, const CanFrame & /*original*/, uint32_t now = millis())
 {
     uint8_t activeRaw = 0;
     if (!dashReadHw3OffsetRawShared(modified, activeRaw))
@@ -231,12 +235,11 @@ inline bool dashApplyHw3OffsetSlew(CanFrame &modified, const CanFrame & /*origin
 
     hw3OffsetTargetRaw = activeRaw;
     uint8_t shapedRaw = activeRaw;
-    uint32_t now = millis();
 
     if (hw3OffsetSlew)
     {
         uint8_t last = hw3OffsetLastRaw;
-        if (activeRaw < last && hw3OffsetLastSentMs != 0)
+        if (activeRaw < last && hw3OffsetHasQueued)
         {
             uint32_t rateRawPerSec = static_cast<uint32_t>(dashLoadHw3SlewRate(hw3SlewRate)) * 4;
             uint32_t dt = now - hw3OffsetLastSentMs;
@@ -250,11 +253,18 @@ inline bool dashApplyHw3OffsetSlew(CanFrame &modified, const CanFrame & /*origin
         }
     }
 
-    hw3OffsetLastRaw = shapedRaw;
-    hw3OffsetLastSentMs = now;
     if (shapedRaw == activeRaw)
         return false;
 
     dashWriteHw3OffsetRawShared(modified, shapedRaw);
     return true;
+}
+
+inline void dashCommitHw3OffsetQueued(const CanFrame &frame, uint32_t queuedAtMs)
+{
+    uint8_t raw = 0;
+    if ((frame.data[0] & 7) != 2 || !dashReadHw3OffsetRawShared(frame, raw)) return;
+    hw3OffsetLastQueuedRaw = raw;
+    hw3OffsetLastQueuedMs = queuedAtMs;
+    hw3OffsetHasQueued = true;
 }

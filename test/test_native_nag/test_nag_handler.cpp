@@ -1,3 +1,4 @@
+#include "../frame_test_dispatch.h"
 #include <unity.h>
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
@@ -73,28 +74,28 @@ void test_nag_filter_ids_value()
 void test_nag_echoes_when_handson_0()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
 void test_nag_does_not_echo_when_handson_1()
 {
     CanFrame f = makeEpasFrame(1, 1.5, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
 void test_nag_does_not_echo_when_handson_2()
 {
     CanFrame f = makeEpasFrame(2, 2.5, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
 void test_nag_does_not_echo_when_handson_3()
 {
     CanFrame f = makeEpasFrame(3, 3.0, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
@@ -102,7 +103,7 @@ void test_nag_does_not_echo_when_disabled()
 {
     handler.nagKillerActive = false;
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
@@ -110,7 +111,7 @@ void test_nag_ignores_non_880_id()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     f.id = 881; // wrong ID
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
@@ -118,7 +119,7 @@ void test_nag_ignores_short_dlc()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     f.dlc = 7; // too short
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
@@ -129,7 +130,7 @@ void test_nag_ignores_short_dlc()
 void test_nag_counter_increments_by_1()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     uint8_t outCounter = mock.sent[0].data[6] & 0x0F;
     TEST_ASSERT_EQUAL_HEX8(0x0D, outCounter); // 0x0C + 1
@@ -138,7 +139,7 @@ void test_nag_counter_increments_by_1()
 void test_nag_counter_wraps_from_f_to_0()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0F);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     uint8_t outCounter = mock.sent[0].data[6] & 0x0F;
     TEST_ASSERT_EQUAL_HEX8(0x00, outCounter); // 0x0F + 1 wraps to 0
@@ -147,7 +148,7 @@ void test_nag_counter_wraps_from_f_to_0()
 void test_nag_counter_preserves_upper_nibble()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x05, 2); // eacStatus=2 -> upper nibble = 0x40
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     uint8_t upperNibble = mock.sent[0].data[6] & 0xF0;
     uint8_t expectedUpper = f.data[6] & 0xF0;
@@ -161,7 +162,7 @@ void test_nag_counter_preserves_upper_nibble()
 void test_nag_sets_handson_to_1()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     uint8_t outHandsOn = (mock.sent[0].data[4] >> 6) & 0x03;
     TEST_ASSERT_EQUAL_UINT8(1, outHandsOn);
 }
@@ -170,7 +171,7 @@ void test_nag_preserves_byte4_lower_bits()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     f.data[4] = 0x1F; // handsOn=0, lower bits = 0x1F
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     uint8_t outLower = mock.sent[0].data[4] & 0x3F;
     TEST_ASSERT_EQUAL_HEX8(0x1F, outLower); // lower 6 bits preserved
 }
@@ -178,14 +179,14 @@ void test_nag_preserves_byte4_lower_bits()
 void test_nag_sets_fixed_torque_0xB6()
 {
     CanFrame f = makeEpasFrame(0, 0.10, 0x0C); // low torque
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_HEX8(0xB6, mock.sent[0].data[3]);
 }
 
 void test_nag_torque_value_is_1_80_nm()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     // Decode torque from echoed frame
     uint16_t tRaw = ((mock.sent[0].data[2] & 0x0F) << 8) | mock.sent[0].data[3];
     float torque = tRaw * 0.01f - 20.5f;
@@ -205,7 +206,7 @@ void test_nag_copies_bytes_0_1_2_5_unchanged()
         sum += f.data[i];
     f.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
 
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_HEX8(0xAB, mock.sent[0].data[0]);
     TEST_ASSERT_EQUAL_HEX8(0xCD, mock.sent[0].data[1]);
     TEST_ASSERT_EQUAL_HEX8(0x88, mock.sent[0].data[2]); // upper nibble preserved, lower nibble = 0x08 (fixed torque 0x08B6)
@@ -219,14 +220,14 @@ void test_nag_copies_bytes_0_1_2_5_unchanged()
 void test_nag_checksum_correct()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_TRUE(verifyChecksum(mock.sent[0]));
 }
 
 void test_nag_checksum_correct_at_counter_boundary()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0F); // counter wraps
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_TRUE(verifyChecksum(mock.sent[0]));
 }
 
@@ -237,7 +238,7 @@ void test_nag_checksum_correct_with_various_inputs()
     {
         mock.reset();
         CanFrame f = makeEpasFrame(0, -5.0 + cnt * 0.7, cnt);
-        handler.handleMessage(f, mock);
+        dispatchTestFrame(handler, f, mock);
         TEST_ASSERT_EQUAL(1, mock.sent.size());
         TEST_ASSERT_TRUE_MESSAGE(verifyChecksum(mock.sent[0]), "Checksum failed for counter sweep");
     }
@@ -254,7 +255,7 @@ void test_nag_output_torque_never_exceeds_safe_range()
     {
         mock.reset();
         CanFrame f = makeEpasFrame(0, -20.0 + cnt * 2.5, cnt);
-        handler.handleMessage(f, mock);
+        dispatchTestFrame(handler, f, mock);
         TEST_ASSERT_EQUAL(1, mock.sent.size());
 
         uint16_t tRaw = ((mock.sent[0].data[2] & 0x0F) << 8) | mock.sent[0].data[3];
@@ -271,7 +272,7 @@ void test_nag_output_torque_never_exceeds_safe_range()
 void test_nag_output_handson_never_exceeds_1()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     uint8_t ho = (mock.sent[0].data[4] >> 6) & 0x03;
     TEST_ASSERT_EQUAL_UINT8(1, ho); // exactly 1, never 2 or 3
 }
@@ -283,14 +284,14 @@ void test_nag_output_handson_never_exceeds_1()
 void test_nag_increments_frames_sent()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
 }
 
 void test_nag_increments_echo_count()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_UINT32(1, handler.nagEchoCount);
 }
 
@@ -299,7 +300,7 @@ void test_nag_multiple_frames_count_correctly()
     for (int i = 0; i < 10; i++)
     {
         CanFrame f = makeEpasFrame(0, 0.33, i & 0x0F);
-        handler.handleMessage(f, mock);
+        dispatchTestFrame(handler, f, mock);
     }
     TEST_ASSERT_EQUAL_UINT32(10, handler.nagEchoCount);
     TEST_ASSERT_EQUAL(10, mock.sent.size());
@@ -318,11 +319,11 @@ void test_nag_echoes_only_handson_0_in_mixed_sequence()
     CanFrame f2 = makeEpasFrame(2, 2.50, 0x03);
     CanFrame f0c = makeEpasFrame(0, 0.05, 0x04);
 
-    handler.handleMessage(f0a, mock);
-    handler.handleMessage(f1, mock);
-    handler.handleMessage(f0b, mock);
-    handler.handleMessage(f2, mock);
-    handler.handleMessage(f0c, mock);
+    dispatchTestFrame(handler, f0a, mock);
+    dispatchTestFrame(handler, f1, mock);
+    dispatchTestFrame(handler, f0b, mock);
+    dispatchTestFrame(handler, f2, mock);
+    dispatchTestFrame(handler, f0c, mock);
 
     TEST_ASSERT_EQUAL(3, mock.sent.size()); // only 3 echoes for ho=0
 }
@@ -334,14 +335,14 @@ void test_nag_echoes_only_handson_0_in_mixed_sequence()
 void test_nag_output_id_is_880()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
 }
 
 void test_nag_output_dlc_is_8()
 {
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
-    handler.handleMessage(f, mock);
+    dispatchTestFrame(handler, f, mock);
     TEST_ASSERT_EQUAL_UINT8(8, mock.sent[0].dlc);
 }
 

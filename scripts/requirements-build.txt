@@ -1,0 +1,5 @@
+platformio==6.1.19
+rjsmin==1.2.5
+csscompressor==0.9.5
+htmlmin==0.1.12
+esptool==4.11.0

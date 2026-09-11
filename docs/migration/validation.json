@@ -1,0 +1,173 @@
+{
+  "baseline_commit": "6e4f9e33c5c02eca4e83cd8a59a24a2802a5c3d8",
+  "compiler_sha256": "4f40f17d8a5a1052b83de568fe2e951fa37a3a21c38676e5b1da5707029cce61",
+  "variants": [
+    {
+      "name": "dashboard_fsd252",
+      "rx_events": 229376,
+      "output_sha256": "46bf45465b23f2282bdf58994a07e1530d910aac1ec356b7c9f242e4344a972f",
+      "equal": true
+    },
+    {
+      "name": "dashboard_builtin",
+      "rx_events": 229376,
+      "output_sha256": "0a11edeea99706d3eff6a17d5d45923f7f13d52e799eecc4ad9a93ff70f49277",
+      "equal": true
+    },
+    {
+      "name": "native_optional",
+      "rx_events": 229376,
+      "output_sha256": "57f60492f59648a761f79169bcafc0c777a5446000993bd13bb7e793adbfc3c4",
+      "equal": true
+    }
+  ],
+  "contract_tests": "passed",
+  "native_suites": [
+    {
+      "suite": "test_native_bypass_tlssc_requirement",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_dashboard",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_helpers",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_hw3",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_hw4",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_injection_after_ap",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_legacy",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_log_buffer",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_mcp2515_recovery",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_nag",
+      "exit": 0,
+      "compiled": true
+    },
+    {
+      "suite": "test_native_twai",
+      "exit": 0,
+      "compiled": true
+    }
+  ],
+  "native_tests": 187,
+  "python_tests": 23,
+  "baseline_stale_native_assertions_corrected": 11,
+  "scope": "phase_1_field_intents_composition_single_submission",
+  "target_build": {
+    "environment": "waveshare_ESP32_S3_RS485_CAN",
+    "build_exit": 0,
+    "evidence": "compile_and_link",
+    "artifacts": [
+      {
+        "name": "firmware.bin",
+        "size": 1121392,
+        "sha256": "a86a4e76be3845101adc750d1173ee49cab1ede11508162e4066acca0ddf675f"
+      },
+      {
+        "name": "firmware.elf",
+        "size": 14282624,
+        "sha256": "222119aa9c350a15a4f271a6229ff8d60f28b1ea458cdda8167cfab42a6ffc12"
+      },
+      {
+        "name": "bootloader.bin",
+        "size": 18576,
+        "sha256": "5da7c62c2db439d1306071f37714d09e5f106f8110ecedf4790b7fd8957928d7"
+      },
+      {
+        "name": "partitions.bin",
+        "size": 3072,
+        "sha256": "d7cca4968173011e2563bc81b8969ff183af13b2e494ed61ec4016d007d8e946"
+      }
+    ],
+    "ram_static_bytes": 51968,
+    "app_slot_bytes": 4194304,
+    "image_info_verified": {
+      "chip": "ESP32-S3",
+      "chip_id": 9,
+      "flash_size": "16MB",
+      "flash_mode": "DIO",
+      "flash_frequency": "80MHz",
+      "checksum": "valid",
+      "validation_hash": "valid",
+      "app_descriptor_version": "6e4f9e3-dirty",
+      "note": "Built before migration commit; source file fingerprints bind the actual compiled worktree."
+    },
+    "partition_app0_offset": "0x20000",
+    "partition_app1_offset": "0x420000",
+    "artifact_type": "application_and_build_support_images_not_merged_full_flash"
+  },
+  "hardware_operations_performed": false,
+  "isolated_builder_patch": {
+    "before_sha256": "113f8d06a1b812807fe71a0756ad6fbc831ad08da80e74485d6701c3eea1bced",
+    "after_sha256": "8b5bdf8954f374c3a61f0771a37bf29c599e6dcf3a736bccb1b17035794be53a",
+    "changes": [
+      "normalize both sides before component relpath",
+      "ldgen JSON argument launcher"
+    ]
+  },
+  "source_fingerprints": {
+    "CMakeLists.txt": "8b0b641462f7ec20edb14ea3cee12c3ae310a22d8bcf366dfc8a57fca969f385",
+    "include/app.h": "2d26da9116eda2dee7075a5abb2bc31a29a711340034030b2e970fc78e9e3058",
+    "include/can_frame_types.h": "d9675bd8d8d61fd59464aedd303303dae601d6d10fb9d2de1c662ec8efb754f6",
+    "include/can_helpers.h": "1744b5bfa92d2dd0171d8f3f0a6cd62d2ec9638eefe5379a3634ce524ebacf6d",
+    "include/dash_hw3_speed.h": "6bad5aaf8b887560bd807f664366806f5d3490484349bef440da7fa047c7c71e",
+    "include/dash_legacy_speed.h": "a634c9a751a0521db055e88ad7442871ec0bc7d762da65f145296769289b21fb",
+    "include/drivers/can_driver.h": "2d4e285030d34787edf5abc6630f212c63612a40aa39d64ed2663f295a756505",
+    "include/drivers/esp32_mcp2515_driver.h": "174dc3ba41097037acd644f7cfc203f2ce02ab5dd33b6fd85a0d9c042a8762c0",
+    "include/drivers/espidf_mcp2515.h": "eac6288676f6edc1a1268af4cd99426ab0169a63f2e22215171005a4c4e59ec8",
+    "include/drivers/mcp2515_driver.h": "07c0eb2bf6e2f09bdcd3e3d9250f84af572df3942d2a3469255ecadb68153468",
+    "include/drivers/mock_driver.h": "74404921fa7c8f8ecc90bbcfdec8a0e9bb80970e82b136b3b2800d8216826047",
+    "include/drivers/same51_driver.h": "7e958b698d27817d1fcea9b0a3f2c8d2a5cb8f3bef279f2b95f84b17788e7b9f",
+    "include/drivers/twai_driver.h": "b578beb6059f52ce23e423ef39fd4fe07a363d9b8d02aa9e54c6c945dea8d6e8",
+    "include/frame_coordinator.h": "f0d914104007a5725c21dad5e17d123824aea6d90e2e70f7e552d2b3e9090cf7",
+    "include/frame_pipeline.h": "719dfb82c6086e6af084c8cae90ab63854f93f1e173dbd802263a2fab3bfce4b",
+    "include/handlers.h": "59d0888f98e3c525d4219443455b7aa729b319f05bef777cb9917374b449ee54",
+    "include/log_buffer.h": "be753563bb5ace10c1709f42c03aac689f6029ae0d72eef3d8f29a811e9c30c7",
+    "include/lwip_hooks.h": "00d696aeb8a3f91b05b7a7026fa84b41b1f067820f1056e6193b55558fc55af4",
+    "include/platform/espidf_runtime.h": "f08dfae7ffd9f29f39847d4bf16db204eb027a19b9e0907faf9827c3e5f023cc",
+    "include/shared_types.h": "74e5102e2fa48902e66626211177da22e56221302dfc9478b41201ca374a5994",
+    "include/tx_broker.h": "36027f80c727bcdae2bd7c2d420a0be3ab5debe269533311fefcf1faf72dd30b",
+    "include/web/dash_gateway.h": "f89bce851e0e6b8f7c69ea0f682d5b8209c10b5ec9399c9cc79c3c2f64ebc453",
+    "include/web/mcp2515_dashboard.h": "e7eece491cc08051ca1fee1cd8084f73dbe9a53d505a2a276802c0c174683339",
+    "include/web/mcp2515_dashboard_ui.h": "c396c9dc6b6557b2d293430c09bc30c5f28e52aab0023b880691017a77019875",
+    "include/web/mcp2515_dashboard_ui.src.h": "255a52d20eda69c2466b59683e52b4281f1a25c3aedb257cd6e6442dd30fcd98",
+    "partitions_16mb_ota_4096k_nvs64.csv": "235632123e1ccda94b2d70852e41a46d5c03175d655bb2bc616949c74db51559",
+    "platformio.ini": "392b886e0f34b9493fa26daa1452ac63693bb479378273e3f5be1a2fd2629825",
+    "sdkconfig.defaults": "f83642ade0fb5f7055bee96e1d9638dc646b6ddc6fc2490d69d3b5b182e10c0f",
+    "src/CMakeLists.txt": "336087a08e7ef9b1d89af248e50e8669349abbdece6aa88a5ff6d9886f032955",
+    "src/espidf_runtime.cpp": "3f11aed485f4efce44059fe023bf908a2898ac224eaf818209c813641aafb54b",
+    "src/idf_component.yml": "eacb8c2b2273546ef816dedddc4a7d068eaed11854f18117db4e9274d901b3e1",
+    "src/main.cpp": "f358127663f79d4702ef84436ffa0513e58c97a55a9bcd9dc101798feb6e7344",
+    "VERSION": "a14bfa823f3228b79ff5c2a661d4b690f8e61c6871d1acc7df16dd5e100bebfa"
+  }
+}

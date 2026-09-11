@@ -1,0 +1,23 @@
+{
+  "source_project": "C:\\Users\\Administrator\\Desktop\\FSD-CAN\\ESP32-P4-WIFI6-3CAN",
+  "source_head": "8e0114f2653d8174bd09bdf6453ca4ccbf6bca65",
+  "target_baseline": "6e4f9e33c5c02eca4e83cd8a59a24a2802a5c3d8",
+  "reference_scope": "masked field layers, composition from original source, consume source on accepted submission; no 3CAN runtime or microkernel copied",
+  "files": [
+    {
+      "path": "include/features/b40/vcleft_mux1_composer.h",
+      "sha256": "401adb365fdce943b5e3eb36689e476cdbf4707842508bfb2315bdf9a693e6bd",
+      "matches_head": true
+    },
+    {
+      "path": "include/features/b40/vcleft_mux1_coordinator.h",
+      "sha256": "1ad0525789799221a84bbd1301b1fd2680bd1380ad560c86443f0aa4d541c12e",
+      "matches_head": true
+    },
+    {
+      "path": "include/features/b40/b40_tx_arbiter.h",
+      "sha256": "ec8187395f3eb13c459d592fc3e413aeb3cd0824f0e7730025d8040e354df71d",
+      "matches_head": true
+    }
+  ]
+}

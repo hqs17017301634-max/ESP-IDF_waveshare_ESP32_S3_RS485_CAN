@@ -3,7 +3,7 @@
 #include <memory>
 #include <algorithm>
 #include "can_frame_types.h"
-#include "drivers/can_driver.h"
+#include "frame_coordinator.h"
 #include "can_helpers.h"
 #include "shared_types.h"
 #include "log_buffer.h"
@@ -150,7 +150,21 @@ struct CarManagerBase
 #endif
     }
 
-    virtual void handleMessage(CanFrame &frame, CanDriver &driver) = 0;
+    virtual void collectIntents(const CanFrame &frame, FrameCoordinator &plan) = 0;
+    virtual FrameProtocol protocol() const = 0;
+    virtual void onSubmitted(const TxRequest &request, bool accepted, uint32_t queuedAtMs)
+    {
+        if (accepted)
+        {
+            ++framesSent; // accepted by driver; not TX-done
+            if (request.hasOwner(FeatureId::Hw3Speed))
+                dashCommitHw3OffsetQueued(request.frame(), queuedAtMs);
+            if (request.hasOwner(FeatureId::LegacyMpp))
+                legacyMppLastSentRaw = request.frame().data[6] & 0x1F;
+        }
+        if (onSend) onSend((request.frame().id == 1006 || request.frame().id == 1021)
+                             ? readMuxID(request.frame()) : 0, accepted);
+    }
     virtual const uint32_t *filterIds() const = 0;
     virtual uint8_t filterIdCount() const = 0;
     virtual ~CarManagerBase() = default;
@@ -158,6 +172,7 @@ struct CarManagerBase
 
 struct LegacyHandler : public CarManagerBase
 {
+    FrameProtocol protocol() const override { return FrameProtocol::Legacy; }
     const uint32_t *filterIds() const override
     {
         // 760 added for UI_mppSpeedLimit override (Legacy MPP custom-speed feature).
@@ -168,7 +183,7 @@ struct LegacyHandler : public CarManagerBase
     }
     uint8_t filterIdCount() const override { return 12; }
 
-    void handleMessage(CanFrame &frame, CanDriver &driver) override
+    void collectIntents(const CanFrame &frame, FrameCoordinator &plan) override
     {
         if (onFrame)
             onFrame(frame);
@@ -210,12 +225,7 @@ struct LegacyHandler : public CarManagerBase
             int targetKphClamped = std::min<int>(targetKph, kLegacyMppMaxKph);
             uint8_t targetRaw = static_cast<uint8_t>(targetKphClamped / 5);
             if (targetRaw > kLegacyMppMaxRaw) targetRaw = kLegacyMppMaxRaw;
-            frame.data[6] = (frame.data[6] & 0xE0) | (targetRaw & 0x1F);
-            frame.data[7] = computeVehicleChecksum(frame);
-            legacyMppLastSentRaw = targetRaw;
-            framesSent++;
-            driver.sendCritical(frame);
-            if (onSend) onSend(0, true);
+            plan.bits(FeatureId::LegacyMpp, 6, 0x1F, targetRaw);
             return;
         }
         if (frame.id == 280)
@@ -273,26 +283,18 @@ struct LegacyHandler : public CarManagerBase
                 // selected driving profile, then send once.
 #else
                 if (shouldInjectSpeedProfile())
-                    setSpeedProfileV12V13(frame, speedProfile);
-                setBit(frame, 46, true);
+                    plan.bits(FeatureId::Profile, 6, 0x06, static_cast<uint8_t>((int)speedProfile << 1), RefreshPolicy::EverySource);
+                plan.bits(FeatureId::Fsd, 5, 0x40, 0x40, RefreshPolicy::EverySource);
                 // Match the stable FSD mode path: request smart speed offset
                 // together with the FSD latch when the master switch is enabled.
-                setBit(frame, 40, true);
-                setBit(frame, 41, true);
-                framesSent++;
-                driver.sendCritical(frame);
-                if (onSend)
-                    onSend(0, true);
+                plan.bits(FeatureId::Fsd, 5, 0x01, 0x01, RefreshPolicy::EverySource);
+                plan.bits(FeatureId::Fsd, 5, 0x02, 0x02, RefreshPolicy::EverySource);
 #endif
             }
             if (index == 1 && (!checkNag || checkNag()))
             {
 #if !defined(ESP32_DASHBOARD)
-                setBit(frame, 19, false);
-                framesSent++;
-                driver.sendCritical(frame);
-                if (onSend)
-                    onSend(1, true);
+                plan.bits(FeatureId::Ready, 2, 0x08, 0x00, RefreshPolicy::EverySource);
 #endif
             }
             if (index == 0 && enablePrint)
@@ -317,6 +319,7 @@ struct LegacyHandler : public CarManagerBase
 
 struct HW3Handler : public CarManagerBase
 {
+    FrameProtocol protocol() const override { return FrameProtocol::HW3; }
     const uint32_t *filterIds() const override
     {
         // HW3 runtime only: gear/summon, lock deep-sleep trigger, AP/FSD,
@@ -327,7 +330,7 @@ struct HW3Handler : public CarManagerBase
     }
     uint8_t filterIdCount() const override { return 8; }
 
-    void handleMessage(CanFrame &frame, CanDriver &driver) override
+    void collectIntents(const CanFrame &frame, FrameCoordinator &plan) override
     {
         if (onFrame)
             onFrame(frame);
@@ -446,12 +449,8 @@ struct HW3Handler : public CarManagerBase
                 // original frame, once the AP Gate allows injection.
 #else
                 // Built-in full activation sequence for non-compat builds.
-                setSpeedProfileV12V13(frame, speedProfile);
-                setBit(frame, 46, true);
-                framesSent++;
-                driver.sendCritical(frame);
-                if (onSend)
-                    onSend(0, true);
+                plan.bits(FeatureId::Profile, 6, 0x06, static_cast<uint8_t>((int)speedProfile << 1), RefreshPolicy::EverySource);
+                plan.bits(FeatureId::Fsd, 5, 0x40, 0x40, RefreshPolicy::EverySource);
 #endif
             }
             if (index == 1 && (!checkAD || checkAD()))
@@ -468,9 +467,7 @@ struct HW3Handler : public CarManagerBase
                 // grey wheel. Also note: this fires unconditionally (just
                 // requires CAN injection on), not gated on ADEnabled — nag
                 // suppression is harmless when FSD isn't selected.
-                bool modified = false;
-                setBit(frame, 19, false);
-                modified = true;
+                plan.bits(FeatureId::Ready, 2, 0x08, 0x00, RefreshPolicy::EverySource);
 #if !defined(ESP32_DASHBOARD)
 #if defined(ENHANCED_AUTOPILOT)
                 if (enhancedAutopilotRuntime && enhancedAutopilotInjectionAllowed(injectionGateOpen()))
@@ -479,13 +476,6 @@ struct HW3Handler : public CarManagerBase
                 }
 #endif
 #endif
-                if (modified)
-                {
-                    framesSent++;
-                    driver.sendCritical(frame);
-                    if (onSend)
-                        onSend(1, true);
-                }
 #endif
             }
 #if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
@@ -501,14 +491,12 @@ struct HW3Handler : public CarManagerBase
                     uint8_t activeRaw = dashComputeHw3OffsetRaw(speedOffset);
                     hw3OffsetTargetRaw = activeRaw;
                     dashWriteHw3OffsetRawShared(shaped, activeRaw);
-                    dashApplyHw3OffsetSlew(shaped, frame);
+                    dashApplyHw3OffsetSlew(shaped, frame, plan.nowMs());
 
                     if (framePayloadChanged(frame, shaped))
                     {
-                        framesSent++;
-                        bool ok = driver.sendCritical(shaped);
-                        if (onSend)
-                            onSend(2, ok);
+                        plan.bits(FeatureId::Hw3Speed, 0, 0xC0, shaped.data[0]);
+                        plan.bits(FeatureId::Hw3Speed, 1, 0x3F, shaped.data[1]);
                     }
                 }
             }
@@ -529,7 +517,7 @@ struct HW3Handler : public CarManagerBase
                     uint8_t activeRaw = dashComputeHw3OffsetRaw(speedOffset);
                     hw3OffsetTargetRaw = activeRaw;
                     dashWriteHw3OffsetRawShared(shaped, activeRaw);
-                    dashApplyHw3OffsetSlew(shaped, frame);
+                    dashApplyHw3OffsetSlew(shaped, frame, plan.nowMs());
                 }
                 else
                 {
@@ -544,10 +532,8 @@ struct HW3Handler : public CarManagerBase
                     if (dashReadHw3OffsetRawShared(shaped, raw))
                         hw3OffsetTargetRaw = raw;
                 }
-                framesSent++;
-                driver.sendCritical(shaped);
-                if (onSend)
-                    onSend(2, true);
+                plan.bits(FeatureId::Hw3Speed, 0, 0xC0, shaped.data[0], RefreshPolicy::EverySource);
+                plan.bits(FeatureId::Hw3Speed, 1, 0x3F, shaped.data[1], RefreshPolicy::EverySource);
             }
 #endif
             if (index == 0 && enablePrint)
@@ -590,6 +576,7 @@ struct HW3Handler : public CarManagerBase
  */
 struct NagHandler : public CarManagerBase
 {
+    FrameProtocol protocol() const override { return FrameProtocol::Nag; }
     Shared<bool> nagKillerActive{true};
     Shared<uint32_t> nagEchoCount{0};
 
@@ -600,7 +587,7 @@ struct NagHandler : public CarManagerBase
     }
     uint8_t filterIdCount() const override { return 1; }
 
-    void handleMessage(CanFrame &frame, CanDriver &driver) override
+    void collectIntents(const CanFrame &frame, FrameCoordinator &plan) override
     {
         if (frame.id != 880 || frame.dlc < 8)
             return;
@@ -610,34 +597,16 @@ struct NagHandler : public CarManagerBase
         if (!nagKillerActive || !nagKillerRuntime || handsOn != 0)
             return;
 
-        CanFrame echo;
-        echo.id = 880;
-        echo.dlc = 8;
+        plan.bits(FeatureId::Nag, 2, 0x0F, 0x08, RefreshPolicy::EverySource);
+        plan.bits(FeatureId::Nag, 3, 0xFF, 0xB6, RefreshPolicy::EverySource);
+        plan.bits(FeatureId::Nag, 4, 0x40, 0x40, RefreshPolicy::EverySource);
+    }
 
-        echo.data[0] = frame.data[0];
-        echo.data[1] = frame.data[1];
-        echo.data[2] = (frame.data[2] & 0xF0) | 0x08;
-        echo.data[5] = frame.data[5];
-
-        // Fixed torque = 1.80 Nm (tRaw = 0x08B6)
-        echo.data[3] = 0xB6;
-
-        // handsOnLevel = 1
-        echo.data[4] = frame.data[4] | 0x40;
-
-        // Counter + 1
-        uint8_t cnt = (frame.data[6] & 0x0F);
-        cnt = (cnt + 1) & 0x0F;
-        echo.data[6] = (frame.data[6] & 0xF0) | cnt;
-
-        // Checksum: sum(byte0..byte6) + 0x73
-        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
-        echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
-
-        framesSent++;
-        nagEchoCount++;
-        driver.sendCritical(echo);
-
+    void onSubmitted(const TxRequest &request, bool accepted, uint32_t now) override
+    {
+        CarManagerBase::onSubmitted(request, accepted, now);
+        if (!accepted) return;
+        ++nagEchoCount;
         if (enablePrint && (nagEchoCount % 500 == 1))
         {
             char buf[LogRingBuffer::kMaxMsgLen];
@@ -659,6 +628,7 @@ struct NagHandler : public CarManagerBase
 
 struct HW4Handler : public CarManagerBase
 {
+    FrameProtocol protocol() const override { return FrameProtocol::HW4; }
     const uint32_t *filterIds() const override
     {
 #if defined(ISA_SPEED_CHIME_SUPPRESS) && !defined(ESP32_DASHBOARD)
@@ -677,7 +647,7 @@ struct HW4Handler : public CarManagerBase
     uint8_t filterIdCount() const override { return 12; }
 #endif
 
-    void handleMessage(CanFrame &frame, CanDriver &driver) override
+    void collectIntents(const CanFrame &frame, FrameCoordinator &plan) override
     {
         if (onFrame)
             onFrame(frame);
@@ -726,16 +696,7 @@ struct HW4Handler : public CarManagerBase
                 return;
             if (!isaSpeedChimeSuppressRuntime)
                 return;
-            frame.data[1] |= 0x20;
-            uint8_t sum = 0;
-            for (int i = 0; i < 7; i++)
-                sum += frame.data[i];
-            sum += (921 & 0xFF) + (921 >> 8);
-            frame.data[7] = sum & 0xFF;
-            framesSent++;
-            driver.sendCritical(frame);
-            if (onSend)
-                onSend(0, true);
+            plan.bits(FeatureId::Isa, 1, 0x20, 0x20, RefreshPolicy::EverySource);
             return;
         }
 #endif
@@ -811,36 +772,24 @@ struct HW4Handler : public CarManagerBase
                 // handleHW4 mux-0). Bit 46 = FSD activation latch, bit 60 = HW4-specific
                 // FSD enable. Done in C++ to ensure stable
                 // activation matching the reference project.
-                setBit(frame, 46, true);
-                setBit(frame, 60, true);
+                plan.bits(FeatureId::Fsd, 5, 0x40, 0x40, RefreshPolicy::EverySource);
+                plan.bits(FeatureId::Fsd, 7, 0x10, 0x10, RefreshPolicy::EverySource);
 #if defined(EMERGENCY_VEHICLE_DETECTION)
                 if (emergencyVehicleDetectionRuntime)
-                    setBit(frame, 59, true);
+                    plan.bits(FeatureId::Fsd, 7, 0x08, 0x08, RefreshPolicy::EverySource);
 #endif
-                framesSent++;
-                driver.sendCritical(frame);
-                if (onSend)
-                    onSend(0, true);
             }
             if (index == 2 && ADEnabled && !speedProfileAuto && (!checkAD || checkAD()))
             {
-                setSpeedProfileHW4(frame, speedProfile);
-                framesSent++;
-                driver.sendCritical(frame);
-                if (onSend)
-                    onSend(2, true);
+                plan.bits(FeatureId::Profile, 7, 0x70, static_cast<uint8_t>((int)speedProfile << 4), RefreshPolicy::EverySource);
             }
             if (index == 1 && ADEnabled && (!checkAD || checkAD()))
             {
                 // Nag suppression + FSD ready (ported from tesla-fsd-controller-main
                 // mod_fsd.h handleHW4 mux-1). bit 19=0 (suppress nag), bit 47=1
                 // (HW4-specific FSD ready signal — without this HW4 will NOT activate).
-                setBit(frame, 19, false);
-                setBit(frame, 47, true);
-                framesSent++;
-                driver.sendCritical(frame);
-                if (onSend)
-                    onSend(1, true);
+                plan.bits(FeatureId::Ready, 2, 0x08, 0x00, RefreshPolicy::EverySource);
+                plan.bits(FeatureId::Ready, 5, 0x80, 0x80, RefreshPolicy::EverySource);
             }
             if (index == 0 && enablePrint)
             {
@@ -861,3 +810,23 @@ struct HW4Handler : public CarManagerBase
         }
     }
 };
+
+// Former Dashboard post-handler mutation, now one contributor to the same RX
+// transaction. The caller supplies the existing AP gate decision.
+inline void collectFsdCompatibility(CarManagerBase &handler, FrameCoordinator &plan, bool injectionActive)
+{
+#if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
+    const auto protocol = handler.protocol();
+    if ((protocol != FrameProtocol::Legacy && protocol != FrameProtocol::HW3) || !injectionActive)
+        return;
+    const auto &source = plan.source();
+    if (source.id != (protocol == FrameProtocol::Legacy ? 1006U : 1021U) ||
+        source.dlc != 8 || readMuxID(source) != 0)
+        return;
+    if (!handler.speedProfileAuto)
+        plan.bits(FeatureId::Profile, 6, 0x06, static_cast<uint8_t>((int)handler.speedProfile << 1));
+    plan.bits(FeatureId::Fsd, 5, 0x40, 0x40);
+#else
+    (void)handler; (void)plan; (void)injectionActive;
+#endif
+}

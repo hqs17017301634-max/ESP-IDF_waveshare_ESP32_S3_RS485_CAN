@@ -5,6 +5,7 @@
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
 #include "handlers.h"
+#include "frame_pipeline.h"
 
 #ifndef NATIVE_BUILD
 #ifdef ESP_PLATFORM
@@ -47,6 +48,8 @@ using SelectedHandler = LegacyHandler;
 static std::unique_ptr<CanDriver> appDriver;
 static std::unique_ptr<CarManagerBase> appHandler;
 static CarManagerBase *appActiveHandler = nullptr;
+static TxBroker appTxBroker;
+static uint64_t appSourceSequence = 0;
 
 #if defined(ESP_PLATFORM) && defined(DRIVER_TWAI)
 static volatile bool appCanTaskDedicated = false;
@@ -241,6 +244,8 @@ static bool appLoop()
     while (appDriver->read(frame))
     {
         processedFrame = true;
+        if (frame.extended || frame.remote || frame.id > 0x7FF || frame.dlc > 8)
+            continue;
         if (frame.bus == CAN_BUS_ANY)
             frame.bus = CAN_BUS_DEFAULT;
 #if !(defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_RGB_STATUS_LED))
@@ -256,11 +261,17 @@ static bool appLoop()
         }
         else
         {
-            h->handleMessage(frame, *appDriver);
-            dashPostProcessFrame(original, *appDriver);
+            FrameContext context(original, ++appSourceSequence, h->protocol(), millis());
+            FrameCoordinator plan(context);
+            h->collectIntents(original, plan);
+            dashCollectPostIntents(*h, original, plan);
+            submitComposedFrame(*h, plan, appTxBroker, *appDriver, millis(), []() -> uint32_t { return millis(); });
         }
 #else
-        h->handleMessage(frame, *appDriver);
+        FrameContext context(frame, ++appSourceSequence, h->protocol(), millis());
+        FrameCoordinator plan(context);
+        h->collectIntents(frame, plan);
+        submitComposedFrame(*h, plan, appTxBroker, *appDriver, millis(), []() -> uint32_t { return millis(); });
 #endif
 #if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD)
         if (++framesThisLoop >= 32)
