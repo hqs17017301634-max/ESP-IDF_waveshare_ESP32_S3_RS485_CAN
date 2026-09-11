@@ -424,18 +424,20 @@ extern SPIFFSClass SPIFFS;
 class WiFiClass
 {
 public:
-    void mode(wifi_mode_t mode);
+    bool mode(wifi_mode_t mode);
     wifi_mode_t getMode();
     void persistent(bool) {}
     void setSleep(bool enabled);
     bool softAPConfig(IPAddress local, IPAddress gateway, IPAddress subnet);
     bool softAP(const char *ssid, const char *pass, int channel, int hidden, int maxConn);
-    void begin(const char *ssid, const char *pass);
+    bool begin(const char *ssid, const char *pass);
     wl_status_t status();
+    esp_err_t lastError() const { return lastError_; }
+    const char *lastErrorName() const { return esp_err_to_name(lastError_); }
     uint8_t lastDisconnectReason() const;
     const char *lastDisconnectReasonName() const;
     void disconnect(bool wifioff = false, bool eraseap = false);
-    void config(IPAddress local, IPAddress gateway, IPAddress subnet, IPAddress dns);
+    bool config(IPAddress local, IPAddress gateway, IPAddress subnet, IPAddress dns);
     IPAddress localIP();
     IPAddress softAPIP();
     int softAPgetStationNum();
@@ -451,9 +453,12 @@ public:
     esp_netif_t *staNetif() const { return staNetif_; }
 
 private:
-    void ensure();
+    bool ensure();
+    bool check(esp_err_t error, const char *operation);
 
     bool initialized_ = false;
+    bool driverInitialized_ = false;
+    esp_err_t lastError_ = ESP_OK;
     esp_netif_t *apNetif_ = nullptr;
     esp_netif_t *staNetif_ = nullptr;
     std::vector<wifi_ap_record_t> scanRecords_;

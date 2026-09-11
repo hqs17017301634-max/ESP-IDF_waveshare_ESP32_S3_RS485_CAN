@@ -2565,23 +2565,18 @@ static String dashFrameDataHex(const CanFrame &frame)
 static bool dashStartAccessPoint(bool withSta)
 {
     WiFi.persistent(false);
-    WiFi.mode(withSta ? WIFI_AP_STA : WIFI_AP);
+    if (!WiFi.mode(withSta ? WIFI_AP_STA : WIFI_AP)) return false;
     WiFi.setSleep(false);
 
     IPAddress apIp(100, 100, 1, 1);
     IPAddress apMask(255, 255, 255, 0);
-    WiFi.softAPConfig(apIp, apIp, apMask);
+    if (!WiFi.softAPConfig(apIp, apIp, apMask)) return false;
 
     if (!dashApConfigValid(apSSID, apPass))
         dashUseDefaultApConfig();
 
     apRuntimeChannel = dashConfiguredApChannel();
     bool ok = WiFi.softAP(apSSID, apPass, apRuntimeChannel, apHidden ? 1 : 0, kDashApMaxConn);
-    if (!ok)
-    {
-        dashUseDefaultApConfig();
-        ok = WiFi.softAP(apSSID, apPass, apRuntimeChannel, 0, kDashApMaxConn);
-    }
     if (!ok)
         dashLog("[WIFI] AP start failed");
     else
@@ -2594,30 +2589,20 @@ static void dashBeginSTA()
     if (strlen(staSSID) == 0)
         return;
 
-    // Ensure STA interface is enabled (AP+STA) before initiating a STA connect.
-    // Without this, esp_wifi_set_config(WIFI_IF_STA, ...) inside WiFi.begin()
-    // can fail silently when the device is in AP-only mode.
-    if (WiFi.getMode() != WIFI_AP_STA)
-        WiFi.mode(WIFI_AP_STA);
-
-    if (staStaticIP && (uint32_t)staIP != 0)
-    {
-        WiFi.config(staIP, staGW, staMask, staDNS);
-        dashLog("[WIFI] Static IP: " + staIP.toString());
-    }
-    else
-    {
-        WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
-    }
-    // Disconnect any prior STA association before issuing a fresh begin().
-    // Back-to-back WiFi.begin() without disconnect can leave esp_wifi in an
-    // intermediate state and trigger an extra channel switch on the shared
-    // AP+STA radio, which the AP beacon picks up as jitter (clients on
-    // 100.100.1.1 momentarily see the AP go away). eraseAP=false keeps the
-    // soft-AP up; wifioff=false keeps the radio on.
+    bool ok = WiFi.getMode() == WIFI_AP_STA || WiFi.mode(WIFI_AP_STA);
     WiFi.disconnect(false, false);
-    WiFi.begin(staSSID, staPass);
-    staConnectAttemptActive = true;
+    if (ok) ok = staStaticIP && (uint32_t)staIP != 0
+        ? WiFi.config(staIP, staGW, staMask, staDNS)
+        : WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+    if (ok) ok = WiFi.begin(staSSID, staPass);
+    staConnectAttemptActive = ok;
+    if (!ok)
+    {
+        staRetryAt = millis() + kDashStaSavedPollMs;
+        if (staConsecutiveFailures < 255) staConsecutiveFailures++;
+        dashLog("[WIFI] Connect setup failed: " + String(WiFi.lastErrorName()));
+        return;
+    }
     staConnectStartedAt = millis();
     staRetryAt = 0;
     dashLog("[WIFI] Connecting to " + String(staSSID) + "...");
@@ -2848,11 +2833,15 @@ static void dashCheckWifi()
             if (staConsecutiveFailures < 255)
                 staConsecutiveFailures++;
             dashLog("[WIFI] Disconnected from " + String(staSSID) +
-                    "; retry saved networks in " + String(kDashStaSavedPollMs / 1000) + "s (fail#" +
+                    "; retry last working hotspot in 2s (fail#" +
                     String(staConsecutiveFailures) + ")");
             dashGatewayOnStaDisconnected(WiFi.apNetif());
             staConnectAttemptActive = false;
-            staRetryAt = now + kDashStaSavedPollMs;
+            // One prompt retry of the last working hotspot; rotation advances
+            // before the attempt, so a vanished phone cannot trap the fallback.
+            if (wifiActiveSlot >= 0 && wifiActiveSlot < (int8_t)wifiNetworkCount)
+                wifiNextRotateSlot = wifiActiveSlot;
+            staRetryAt = now + 2000;
         }
     }
 
@@ -3262,6 +3251,8 @@ static void handleWifiStatus()
     j += ",\"wifi_status_name\":\"";
     j += dashWifiStatusName(wifiStatus);
     j += "\"";
+    j += ",\"api_error\":" + String(static_cast<int>(WiFi.lastError()));
+    j += ",\"api_error_name\":\"" + String(WiFi.lastErrorName()) + "\"";
     j += ",\"disconnect_reason\":";
     j += String(static_cast<unsigned>(WiFi.lastDisconnectReason()));
     j += ",\"disconnect_reason_name\":\"";

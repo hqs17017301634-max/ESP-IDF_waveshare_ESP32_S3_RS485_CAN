@@ -3,6 +3,8 @@
 #ifdef ESP_PLATFORM
 
 #include <errno.h>
+#include "net/wifi_credentials.h"
+#include <atomic>
 #include <fcntl.h>
 #include <driver/usb_serial_jtag.h>
 #include <sys/stat.h>
@@ -21,9 +23,10 @@ static bool serialInputConfigured = false;
 static bool serialUsbJtagReady = false;
 static bool serialUsbJtagTried = false;
 static int serialPeekByte = -1;
-static volatile wl_status_t wifiStaStatus = WL_DISCONNECTED;
-static volatile uint8_t wifiLastDisconnectReason = 0;
+static std::atomic<wl_status_t> wifiStaStatus = WL_DISCONNECTED;
+static std::atomic<uint8_t> wifiLastDisconnectReason = 0;
 static bool wifiEventHandlersRegistered = false;
+static std::atomic<bool> wifiStaHasIp{false};
 
 static void configureWifiLogLevels()
 {
@@ -73,14 +76,12 @@ static const char *wifiDisconnectReasonName(uint8_t reason)
         return "auth_fail";
     case WIFI_REASON_ASSOC_FAIL:
         return "assoc_fail";
-#ifdef WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY
     case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
         return "no_compatible_security";
     case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
         return "authmode_threshold";
     case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
         return "rssi_threshold";
-#endif
     default:
         return "unknown";
     }
@@ -102,6 +103,7 @@ static void wifiEventHandler(void *, esp_event_base_t base, int32_t id, void *ev
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
         {
+            wifiStaHasIp = false;
             uint8_t reason = 0;
             if (eventData)
                 reason = static_cast<wifi_event_sta_disconnected_t *>(eventData)->reason;
@@ -129,8 +131,14 @@ static void wifiEventHandler(void *, esp_event_base_t base, int32_t id, void *ev
     }
     else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
     {
+        wifiStaHasIp = true;
         wifiStaStatus = WL_CONNECTED;
         wifiLastDisconnectReason = 0;
+    }
+    else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP)
+    {
+        wifiStaHasIp = false;
+        wifiStaStatus = WL_CONNECTION_LOST;
     }
 }
 
@@ -508,36 +516,56 @@ bool SPIFFSClass::remove(const String &path)
     return std::remove(full.c_str()) == 0;
 }
 
-void WiFiClass::ensure()
+bool WiFiClass::check(esp_err_t error, const char *operation)
 {
-    if (initialized_)
-        return;
+    if (error == ESP_OK) return true;
+    lastError_ = error;
+    ESP_LOGE(kCompatTag, "WiFi %s failed: %s (0x%x)", operation, esp_err_to_name(error), error);
+    return false;
+}
+
+bool WiFiClass::ensure()
+{
+    if (initialized_) return true;
     configureWifiLogLevels();
-    esp_netif_init();
-    esp_event_loop_create_default();
-    apNetif_ = esp_netif_create_default_wifi_ap();
-    staNetif_ = esp_netif_create_default_wifi_sta();
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    // This firmware is a real-time CAN tool. Never let WiFi enter modem-sleep:
-    // its periodic wake bursts share core 0 with lwIP/httpd and add jitter to
-    // CAN echo/inject timing, which can make the grey steering wheel flicker.
-    // Set the global power-save default to NONE right after init.
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    if (!check(esp_netif_init(), "netif init")) return false;
+    esp_err_t loop = esp_event_loop_create_default();
+    if (loop != ESP_ERR_INVALID_STATE && !check(loop, "event loop")) return false;
+    if (!apNetif_) apNetif_ = esp_netif_create_default_wifi_ap();
+    if (!staNetif_) staNetif_ = esp_netif_create_default_wifi_sta();
+    if (!apNetif_ || !staNetif_) return check(ESP_ERR_NO_MEM, "netif allocation");
+    if (!driverInitialized_)
+    {
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        if (!check(esp_wifi_init(&cfg), "init")) return false;
+        driverInitialized_ = true;
+    }
+    // The dashboard owns the saved networks in NVS. Transient retries must not
+    // rewrite a second WiFi-driver copy of credentials or restore stale config.
+    if (!check(esp_wifi_set_storage(WIFI_STORAGE_RAM), "RAM storage")) return false;
+    if (!check(esp_wifi_set_ps(WIFI_PS_NONE), "power save")) return false;
     if (!wifiEventHandlersRegistered)
     {
-        esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEventHandler, nullptr, nullptr);
-        esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifiEventHandler, nullptr, nullptr);
+        esp_event_handler_instance_t instance = nullptr;
+        if (!check(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                wifiEventHandler, nullptr, &instance), "WiFi events")) return false;
+        if (!check(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
+                wifiEventHandler, nullptr, nullptr), "IP events"))
+        {
+            esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance);
+            return false;
+        }
         wifiEventHandlersRegistered = true;
     }
     initialized_ = true;
+    lastError_ = ESP_OK;
+    return true;
 }
 
-void WiFiClass::mode(wifi_mode_t modeValue)
+bool WiFiClass::mode(wifi_mode_t modeValue)
 {
-    ensure();
-    esp_wifi_set_mode(modeValue);
-    esp_wifi_start();
+    return ensure() && check(esp_wifi_set_mode(modeValue), "mode") &&
+           check(esp_wifi_start(), "start");
 }
 
 wifi_mode_t WiFiClass::getMode()
@@ -552,91 +580,82 @@ wifi_mode_t WiFiClass::getMode()
 
 void WiFiClass::setSleep(bool enabled)
 {
-    ensure();
-    esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+    if (ensure()) check(esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE), "power save");
 }
 
 bool WiFiClass::softAPConfig(IPAddress local, IPAddress gateway, IPAddress subnet)
 {
-    ensure();
+    if (!ensure()) return false;
     esp_netif_ip_info_t ip = {};
-    ip.ip = local.raw();
-    ip.gw = gateway.raw();
-    ip.netmask = subnet.raw();
-    esp_netif_dhcps_stop(apNetif_);
-    esp_err_t err = esp_netif_set_ip_info(apNetif_, &ip);
-    esp_netif_dhcps_start(apNetif_);
-    return err == ESP_OK;
+    ip.ip = local.raw(); ip.gw = gateway.raw(); ip.netmask = subnet.raw();
+    esp_err_t stop = esp_netif_dhcps_stop(apNetif_);
+    if (stop != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED && !check(stop, "DHCP server stop")) return false;
+    bool configured = check(esp_netif_set_ip_info(apNetif_, &ip), "AP IP");
+    esp_err_t start = esp_netif_dhcps_start(apNetif_);
+    return (start == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED || check(start, "DHCP server start")) && configured;
 }
 
 bool WiFiClass::softAP(const char *ssid, const char *pass, int channelValue, int hidden, int maxConn)
 {
-    ensure();
+    if (!ensure()) return false;
     wifi_config_t cfg = {};
-    std::snprintf(reinterpret_cast<char *>(cfg.ap.ssid), sizeof(cfg.ap.ssid), "%s", ssid ? ssid : "");
-    std::snprintf(reinterpret_cast<char *>(cfg.ap.password), sizeof(cfg.ap.password), "%s", pass ? pass : "");
-    cfg.ap.ssid_len = std::strlen(reinterpret_cast<const char *>(cfg.ap.ssid));
+    if (!wifi_credentials::copy(cfg.ap.ssid, cfg.ap.password, ssid, pass ? pass : ""))
+        return check(ESP_ERR_INVALID_ARG, "AP credentials");
+    cfg.ap.ssid_len = std::strlen(ssid);
     cfg.ap.channel = channelValue;
     cfg.ap.max_connection = maxConn;
     cfg.ap.ssid_hidden = hidden;
-    cfg.ap.authmode = pass && std::strlen(pass) >= 8 ? WIFI_AUTH_WPA_WPA2_PSK : WIFI_AUTH_OPEN;
-    esp_wifi_set_config(WIFI_IF_AP, &cfg);
-    esp_wifi_start();
+    cfg.ap.authmode = pass && *pass ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    cfg.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP;
+    if (!check(esp_wifi_set_config(WIFI_IF_AP, &cfg), "AP config") ||
+        !check(esp_wifi_start(), "AP start")) return false;
+    lastError_ = ESP_OK;
     return true;
 }
 
-void WiFiClass::begin(const char *ssid, const char *pass)
+bool WiFiClass::begin(const char *ssid, const char *pass)
 {
-    ensure();
+    if (!ensure()) return false;
+    wifiStaHasIp = false;
     wifiStaStatus = WL_IDLE_STATUS;
     wifiLastDisconnectReason = 0;
-    // Ensure the STA interface is enabled before configuring it.
-    // If only AP mode is active, esp_wifi_set_config(WIFI_IF_STA, ...) silently fails.
-    wifi_mode_t curMode = WIFI_MODE_NULL;
-    if (esp_wifi_get_mode(&curMode) != ESP_OK || (curMode != WIFI_MODE_STA && curMode != WIFI_MODE_APSTA))
-    {
-        wifi_mode_t target = (curMode == WIFI_MODE_AP) ? WIFI_MODE_APSTA : WIFI_MODE_STA;
-        esp_wifi_set_mode(target);
-        esp_wifi_start();
-    }
-    wifi_ap_record_t ap = {};
-    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
-        esp_wifi_disconnect();
+    wifi_mode_t curMode = getMode();
+    if (curMode != WIFI_MODE_STA && curMode != WIFI_MODE_APSTA)
+        if (!mode(curMode == WIFI_MODE_AP ? WIFI_MODE_APSTA : WIFI_MODE_STA)) return false;
     wifi_config_t cfg = {};
-    std::snprintf(reinterpret_cast<char *>(cfg.sta.ssid), sizeof(cfg.sta.ssid), "%s", ssid ? ssid : "");
-    std::snprintf(reinterpret_cast<char *>(cfg.sta.password), sizeof(cfg.sta.password), "%s", pass ? pass : "");
+    if (!wifi_credentials::copy(cfg.sta.ssid, cfg.sta.password, ssid, pass ? pass : ""))
+        return check(ESP_ERR_INVALID_ARG, "STA credentials");
     cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
     cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     cfg.sta.pmf_cfg.capable = true;
     cfg.sta.pmf_cfg.required = false;
-#ifdef WPA3_SAE_PWE_BOTH
+#if CONFIG_ESP_WIFI_ENABLE_WPA3_SAE
+    // WPA3_SAE_PWE_BOTH is an enum, not a preprocessor macro.
     cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
 #endif
     cfg.sta.failure_retry_cnt = 1;
-    esp_wifi_set_config(WIFI_IF_STA, &cfg);
-    esp_wifi_start();
-    esp_wifi_connect();
-    // esp_wifi_start() can reset power-save to the IDF default (MIN_MODEM);
-    // re-assert NONE so STA (re)connect never opens a modem-sleep window that
-    // would jitter CAN timing.
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    if (!check(esp_wifi_set_config(WIFI_IF_STA, &cfg), "STA config") ||
+        !check(esp_wifi_start(), "STA start") ||
+        !check(esp_wifi_set_ps(WIFI_PS_NONE), "STA power save") ||
+        !check(esp_wifi_connect(), "STA connect"))
+    {
+        wifiStaStatus = WL_CONNECT_FAILED;
+        return false;
+    }
+    lastError_ = ESP_OK;
+    return true;
 }
 
 wl_status_t WiFiClass::status()
 {
+    // Only GOT_IP authorizes a connected state. A nonzero cached IP after a
+    // reconnect can belong to the previous hotspot and is not DHCP success.
     wifi_ap_record_t ap = {};
-    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
-    {
-        esp_netif_ip_info_t ip = {};
-        if (staNetif_ && esp_netif_get_ip_info(staNetif_, &ip) == ESP_OK && ip.ip.addr != 0)
-        {
-            wifiStaStatus = WL_CONNECTED;
-            return WL_CONNECTED;
-        }
-        return wifiStaStatus == WL_CONNECTED ? WL_IDLE_STATUS : wifiStaStatus;
-    }
-    return wifiStaStatus;
+    if (wifiStaHasIp && esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+        return WL_CONNECTED;
+    const wl_status_t state = wifiStaStatus.load();
+    return state == WL_CONNECTED ? WL_IDLE_STATUS : state;
 }
 
 uint8_t WiFiClass::lastDisconnectReason() const
@@ -651,40 +670,40 @@ const char *WiFiClass::lastDisconnectReasonName() const
 
 void WiFiClass::disconnect(bool wifioff, bool)
 {
+    wifiStaHasIp = false;
     esp_wifi_disconnect();
     wifiStaStatus = WL_DISCONNECTED;
     if (wifioff)
         esp_wifi_stop();
 }
 
-void WiFiClass::config(IPAddress local, IPAddress gateway, IPAddress subnet, IPAddress dns)
+bool WiFiClass::config(IPAddress local, IPAddress gateway, IPAddress subnet, IPAddress dns)
 {
-    ensure();
+    if (!ensure()) return false;
     uint32_t localRaw = static_cast<uint32_t>(local);
     if (localRaw == 0 || localRaw == IPADDR_NONE)
     {
-        esp_netif_dhcpc_start(staNetif_);
-        return;
+        esp_err_t err = esp_netif_dhcpc_start(staNetif_);
+        return err == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED || check(err, "DHCP client start");
     }
-
-    esp_netif_dhcpc_stop(staNetif_);
+    esp_err_t stop = esp_netif_dhcpc_stop(staNetif_);
+    if (stop != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED && !check(stop, "DHCP client stop")) return false;
     esp_netif_ip_info_t ip = {};
-    ip.ip = local.raw();
-    ip.gw = gateway.raw();
-    ip.netmask = subnet.raw();
-    esp_netif_set_ip_info(staNetif_, &ip);
+    ip.ip = local.raw(); ip.gw = gateway.raw(); ip.netmask = subnet.raw();
+    if (!check(esp_netif_set_ip_info(staNetif_, &ip), "STA static IP")) return false;
     if ((uint32_t)dns != 0)
     {
         esp_netif_dns_info_t dnsInfo = {};
         dnsInfo.ip.type = ESP_IPADDR_TYPE_V4;
         dnsInfo.ip.u_addr.ip4 = dns.raw();
-        esp_netif_set_dns_info(staNetif_, ESP_NETIF_DNS_MAIN, &dnsInfo);
+        if (!check(esp_netif_set_dns_info(staNetif_, ESP_NETIF_DNS_MAIN, &dnsInfo), "STA DNS")) return false;
     }
+    return true;
 }
 
 IPAddress WiFiClass::localIP()
 {
-    ensure();
+    if (!ensure()) return IPAddress(0, 0, 0, 0);
     esp_netif_ip_info_t ip = {};
     esp_netif_get_ip_info(staNetif_, &ip);
     return IPAddress(ip.ip.addr);
@@ -692,7 +711,7 @@ IPAddress WiFiClass::localIP()
 
 IPAddress WiFiClass::softAPIP()
 {
-    ensure();
+    if (!ensure()) return IPAddress(0, 0, 0, 0);
     esp_netif_ip_info_t ip = {};
     esp_netif_get_ip_info(apNetif_, &ip);
     return IPAddress(ip.ip.addr);
@@ -706,7 +725,7 @@ int WiFiClass::softAPgetStationNum()
 
 int WiFiClass::scanNetworks(bool, bool, bool, uint32_t)
 {
-    ensure();
+    if (!ensure()) { scanError_ = lastError_; return -1; }
     scanRecords_.clear();
     scanError_ = ESP_OK;
     wifi_mode_t mode = WIFI_MODE_NULL;

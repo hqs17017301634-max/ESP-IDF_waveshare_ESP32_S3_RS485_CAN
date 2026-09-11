@@ -982,8 +982,8 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> DNS &#x8FC7;&#x6EE4;&#x4E0E;&#x89E3;&#x6790;&#x6548;&#x7387;
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
-Version: 3.0.0-beta.6
-OTA timestamp: 2026-09-11 23:27:56 +08:00</div>
+Version: 3.0.0-beta.7
+OTA timestamp: 2026-09-12 00:54:30 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1004,8 +1004,8 @@ OTA timestamp: 2026-09-11 23:27:56 +08:00</div>
 <div class="modal-backdrop" id="ota-test-modal" onclick="otaTestBackdrop(event)">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
-    <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.6
-OTA timestamp: 2026-09-11 23:27:56 +08:00</div>
+    <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.7
+OTA timestamp: 2026-09-12 00:54:30 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1312,7 +1312,7 @@ Object.assign(I18N_ZH,{
   '80/100/110/120 km/h buckets. Max target: 120/150/155/155 km/h.':'80/100/110/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.6\nOTA timestamp: 2026-09-11 23:27:56 +08:00':'\u7248\u672c\uff1a3.0.0-beta.6\nOTA \u65f6\u95f4\uff1a2026-09-11 23:27:56 +08:00',
+  'Version: 3.0.0-beta.7\nOTA timestamp: 2026-09-12 00:54:30 +08:00':'\u7248\u672c\uff1a3.0.0-beta.7\nOTA \u65f6\u95f4\uff1a2026-09-12 00:54:30 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -3441,7 +3441,7 @@ async function loadGatewayStatus(){
       setGatewayDiag('gw-diag-sta',d.sta_connected?((d.sta_ip||'0.0.0.0')+' \u2022 '+staRssi+' \u2022 '+staCh):'offline',''+(d.sta_connected?'var(--ok)':'var(--tx3)'));
       setGatewayDiag('gw-diag-nat',(d.napt_compiled?'compiled':'not compiled')+' / '+(d.nat?'READY':'WAITING'),d.nat?'var(--ok)':(d.enabled?'var(--warn)':'var(--tx3)'));
       setGatewayDiag('gw-diag-radio',apCh+' / STA '+staCh+' \u2022 '+(d.same_channel?'same':'cross'),d.same_channel?'var(--ok)':(d.sta_connected?'var(--warn)':'var(--tx3)'));
-      setGatewayDiag('gw-diag-dns',(d.dns_task_active?'task':'no task')+' / '+(d.dns_bind_ok?'bind ok':'bind wait')+' / fd '+(d.dns_sock===undefined?'--':d.dns_sock),d.dns_task_active&&d.dns_bind_ok?'var(--ok)':'var(--warn)');
+      setGatewayDiag('gw-diag-dns',(d.dns_healthy?'UDP ready':'UDP waiting')+' / '+(d.dns_tcp_ready?'TCP ready':'TCP waiting')+' / RX '+(d.dns_rx||0)+' / local '+(d.dns_local||0),d.dns_healthy&&d.dns_tcp_ready?'var(--ok)':'var(--warn)');
       setGatewayDiag('gw-diag-slow','last '+(d.dns_latency_last_ms||0)+' ms \u2022 avg '+(d.dns_latency_avg_ms||0)+' ms \u2022 >500/'+(d.dns_slow_500ms||0)+' >1s/'+(d.dns_slow_1000ms||0)+' >2s/'+(d.dns_slow_2000ms||0),gatewayDnsSlowColor(d));
       setGatewayDiag('gw-diag-pending',(d.dns_pending||0)+'/'+(d.dns_pending_capacity||64)+' \u2022 max '+(d.dns_pending_max||0)+' \u2022 full '+(d.dns_pending_full||0)+' \u2022 timeout '+(d.dns_timeouts||0),((d.dns_pending_full||0)>0||(d.dns_timeouts||0)>0)?'var(--err)':'var(--ok)');
       const upModeName=String(d.upstream_dns_mode_name||'auto').toLowerCase();
