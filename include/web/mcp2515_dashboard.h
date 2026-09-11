@@ -2933,24 +2933,28 @@ static void handleWifiScan()
 {
     unsigned long now = millis();
     bool force = server.hasArg("force") && server.arg("force") == "1";
+    const unsigned long scanInterval = force ? 5000UL : kDashScanMinIntervalMs;
     // CAN Priority Mode: WiFi scan stops the radio for up to a few seconds,
     // which jitters the CAN task on the shared core. Require an explicit
     // ?force=1 from the user instead of letting the UI auto-trigger it.
     if (dashCanPriorityMode && !force)
     {
         server.send(200, "application/json",
-                    "{\"networks\":[],\"priorityMode\":true,\"hint\":\"pass ?force=1 to override\"}");
+                    "{\"ok\":false,\"networks\":[],\"priorityMode\":true,\"error\":\"manual-scan-required\"}");
         return;
     }
-    if (!force && dashLastScanAt != 0 && (now - dashLastScanAt) < kDashScanMinIntervalMs)
+    // Explicit manual intent bypasses priority suppression, not the rate limit.
+    if (dashLastScanAt != 0 && (now - dashLastScanAt) < scanInterval)
     {
         if (dashCachedScanJson.length() > 0)
         {
-            server.send(200, "application/json", dashCachedScanJson);
+            String cached = dashCachedScanJson;
+            cached.replace("\"cached\":false", "\"cached\":true");
+            server.send(200, "application/json", cached);
         }
         else
         {
-            unsigned long retryMs = kDashScanMinIntervalMs - (now - dashLastScanAt);
+            unsigned long retryMs = scanInterval - (now - dashLastScanAt);
             server.sendHeader("Retry-After", String((retryMs + 999) / 1000).c_str());
             server.send(429, "application/json",
                         String("{\"ok\":false,\"error\":\"scan-throttled\",\"retry_ms\":") +
@@ -2964,7 +2968,16 @@ static void handleWifiScan()
     WiFi.scanDelete();
     dashPrepareWifiScan();
     int n = WiFi.scanNetworks(false, false, false, 300);
-    String j = "{\"networks\":[";
+    if (n < 0)
+    {
+        String error = "scan-failed";
+#ifdef ESP_PLATFORM
+        error = WiFi.lastScanErrorName();
+#endif
+        server.send(503, "application/json", "{\"ok\":false,\"networks\":[],\"error\":\"" + jsonEscape(error) + "\"}");
+        return;
+    }
+    String j = "{\"ok\":true,\"cached\":false,\"networks\":[";
     for (int i = 0; i < n && i < 20; i++)
     {
         if (i)
@@ -3385,7 +3398,7 @@ static void dashReadCpuLoad(uint8_t &core0Load, uint8_t &core1Load, bool &valid)
     uint32_t idleDelta0 = idle[0] - prevIdle[0];
     uint32_t idleDelta1 = idle[1] - prevIdle[1];
     auto loadFromIdle = [](uint32_t idleDelta, uint32_t elapsedUs) -> uint8_t {
-        uint32_t idlePct = elapsedUs ? (idleDelta * 100UL + elapsedUs / 2) / elapsedUs : 0;
+        uint32_t idlePct = elapsedUs ? static_cast<uint32_t>((static_cast<uint64_t>(idleDelta) * 100ULL + elapsedUs / 2) / elapsedUs) : 0;
         if (idlePct > 100)
             idlePct = 100;
         return static_cast<uint8_t>(100 - idlePct);
@@ -3409,12 +3422,17 @@ static void dashReadCpuLoad(uint8_t &core0Load, uint8_t &core1Load, bool &valid)
 
 static void handleSystemStatus()
 {
-    // CAN Priority Mode: /system_status is the heaviest endpoint (chip info +
-    // task enumeration + heap walks). Return a slim payload so the WebUI keeps
-    // working without starving the CAN task.
-    if (dashCanPriorityMode)
+    // Keep the complete schema in priority mode. Share a bounded-rate snapshot
+    // between clients instead of hiding hardware fields or repeating heap walks.
+    static String cached;
+    static uint32_t sampledAt = 0;
+    static bool sampledPriority = false;
+    const uint32_t now = millis();
+    const uint32_t sampleInterval = dashCanPriorityMode ? 10000UL : 3000UL;
+    if (cached.length() && sampledPriority == dashCanPriorityMode &&
+        static_cast<uint32_t>(now - sampledAt) < sampleInterval)
     {
-        server.send(200, "application/json", "{\"priorityMode\":true}");
+        server.send(200, "application/json", cached);
         return;
     }
 #ifdef ESP_PLATFORM
@@ -3493,6 +3511,8 @@ static void handleSystemStatus()
     dashReadCpuLoad(cpu0Load, cpu1Load, hasCpuLoad);
 
     String j = "{\"chip\":\"ESP32-S3\"";
+    j += ",\"priorityMode\":" + String(dashCanPriorityMode ? "true" : "false");
+    j += ",\"sample_interval_ms\":" + String(sampleInterval);
     j += ",\"module\":\"ESP32-S3R8\"";
     j += ",\"target\":\"" CONFIG_IDF_TARGET "\"";
     j += ",\"cores\":" + String(chip.cores);
@@ -3567,6 +3587,9 @@ static void handleSystemStatus()
         j += "null";
     }
     j += "}";
+    cached = j;
+    sampledAt = millis();
+    sampledPriority = dashCanPriorityMode;
     server.send(200, "application/json", j);
 #else
     server.send(200, "application/json", "{\"chip\":\"native\",\"cores\":1}");
@@ -3740,7 +3763,15 @@ static String dashBuildTaskStatsTextBlocking()
 static void handleTaskStats()
 {
 #if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-    server.send(200, "text/plain; charset=utf-8", dashBuildTaskStatsTextBlocking());
+    static String cached;
+    static uint32_t sampledAt = 0;
+    const uint32_t interval = dashCanPriorityMode ? 15000UL : 5000UL;
+    if (!cached.length() || static_cast<uint32_t>(millis() - sampledAt) >= interval)
+    {
+        cached = dashBuildTaskStatsTextBlocking();
+        sampledAt = millis();
+    }
+    server.send(200, "text/plain; charset=utf-8", cached);
 #else
     server.send(200, "text/plain; charset=utf-8", "FreeRTOS runtime stats are not enabled.\n");
 #endif
@@ -5028,6 +5059,10 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/gateway_blocked_clear", HTTP_POST, handleGatewayBlockedClear);
 #endif
 
+    // Seed the CPU-load interval before a browser asks for its first snapshot.
+    uint8_t initialCore0 = 0, initialCore1 = 0;
+    bool initialCpuLoadValid = false;
+    dashReadCpuLoad(initialCore0, initialCore1, initialCpuLoadValid);
     server.begin();
     if (strlen(staSSID) > 0)
         dashScheduleSTAConnect(kDashStaBootDelayMs);

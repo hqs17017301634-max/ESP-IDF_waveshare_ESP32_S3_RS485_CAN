@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-beta.6] - 2026-09-11
+
+### Fixed
+
+- Manual WiFi scan explicitly requests scanning in CAN priority mode. Failed scans are reported as errors instead of empty results; closely repeated requests reuse a short-lived cache.
+- System status keeps its complete schema in CAN priority mode using rate-limited snapshots. The page loads an initial snapshot and retains displayed values when monitoring is paused.
+- Saved WiFi networks load on page entry and refresh independently of Network Performance Mode. Loading failures are distinct from an empty saved list.
+- Connected WiFi status no longer instructs users to leave the module's hotspot unnecessarily.
+
+### Validation
+
+- 23 Python regression tests and 12 JavaScript UI scenarios passed; isolated Waveshare ESP32-S3 build passed.
+- OTA installed and verified on the connected module; two saved networks were preserved. WiFi scan, full system status, task rows and saved-network display were verified with CAN priority mode enabled.
+
 ## [3.0.0-beta.5] - 2026-05-04
 
 ### Added

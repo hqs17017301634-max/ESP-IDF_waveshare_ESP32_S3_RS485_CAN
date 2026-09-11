@@ -982,8 +982,8 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> DNS &#x8FC7;&#x6EE4;&#x4E0E;&#x89E3;&#x6790;&#x6548;&#x7387;
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
-Version: 3.0.0-beta.5
-OTA timestamp: 2026-09-11 22:27:29 +08:00</div>
+Version: 3.0.0-beta.6
+OTA timestamp: 2026-09-11 23:27:56 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1004,8 +1004,8 @@ OTA timestamp: 2026-09-11 22:27:29 +08:00</div>
 <div class="modal-backdrop" id="ota-test-modal" onclick="otaTestBackdrop(event)">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
-    <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.5
-OTA timestamp: 2026-09-11 22:27:29 +08:00</div>
+    <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.6
+OTA timestamp: 2026-09-11 23:27:56 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1048,6 +1048,15 @@ const SP4=['Chill','Normal','Hurry','Max','Sloth'];
 const $=id=>document.getElementById(id);
 let dashLang=localStorage.getItem('dashLang')||((navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en');
 const I18N_ZH={
+  'Monitoring paused; last sample shown':'监测已暂停，保留最近一次数据',
+  'WiFi is connecting; retry scan shortly':'正在连接热点，请稍后重试扫描',
+  'Scan timed out':'扫描超时',
+  'invalid-scan-response':'扫描响应格式异常',
+  'manual-scan-required':'请点击扫描按钮发起手动扫描',
+  'Scan complete':'扫描完成',
+  'Recent scan results':'显示最近一次扫描结果',
+  'Loading saved networks...':'正在读取已保存网络…',
+  'Saved networks unavailable':'已保存网络读取失败',
 'Light':'浅色','Dark':'深色','Waiting for CAN frames':'等待 CAN 帧','CAN running':'CAN 运行中','Dashboard disconnected':'仪表盘已断开','Dashboard reconnecting':'仪表盘重连中',
 'CAN Bus':'CAN 总线','Injection':'注入','Frame rate':'CAN 帧率','CAN Frame Rate':'CAN 帧率','RX Frames':'接收帧','TX Frames':'发送帧','Errors':'错误','AD Status':'AP 状态','Profile':'配置档','Offset':'偏移','Uptime':'运行时间',
 'Offline':'离线','Online':'在线','Active':'运行中','Inactive':'未激活','BLOCKED':'已阻止','Waiting AP':'等待 AP','No frames':'无帧','Sniffer paused':'嗅探暂停',
@@ -1303,7 +1312,7 @@ Object.assign(I18N_ZH,{
   '80/100/110/120 km/h buckets. Max target: 120/150/155/155 km/h.':'80/100/110/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.5\nOTA timestamp: 2026-09-11 22:27:29 +08:00':'\u7248\u672c\uff1a3.0.0-beta.5\nOTA \u65f6\u95f4\uff1a2026-09-11 22:27:29 +08:00',
+  'Version: 3.0.0-beta.6\nOTA timestamp: 2026-09-11 23:27:56 +08:00':'\u7248\u672c\uff1a3.0.0-beta.6\nOTA \u65f6\u95f4\uff1a2026-09-11 23:27:56 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -1602,8 +1611,8 @@ function startDashboardPolling(){
   dashboardPollTimers.push(intervalVisible(loadWifiStatus,car?45000:(fast?10000:30000)));
   dashboardPollTimers.push(intervalVisible(loadApStatus,car?45000:(fast?10000:30000)));
   dashboardPollTimers.push(intervalVisible(loadGatewayStatus,car?45000:(fast?10000:30000)));
+  dashboardPollTimers.push(intervalVisible(loadWifiNetworks,30000));
   if(fast){
-    dashboardPollTimers.push(intervalVisible(loadWifiNetworks,30000));
     dashboardPollTimers.push(intervalVisible(loadGatewayBlocked,5000));
     dashboardPollTimers.push(intervalVisible(()=>loadGatewayDns(true),15000));
   }
@@ -2540,22 +2549,24 @@ function startSystemMonitor(){
   const t=$('sys-monitor-tgl');if(t)t.checked=true;
   loadSystemStatus();
   loadTaskStats();
-  systemStatusTimer=setInterval(loadSystemStatus,1000);
-  taskStatsTimer=setInterval(loadTaskStats,2000);
+  systemStatusTimer=intervalVisible(loadSystemStatus,isCarUiActive()?10000:5000);
+  taskStatsTimer=intervalVisible(loadTaskStats,15000);
 }
 function stopSystemMonitor(){
   systemStatusEnabled=false;
   const t=$('sys-monitor-tgl');if(t)t.checked=false;
   if(systemStatusTimer){clearInterval(systemStatusTimer);systemStatusTimer=null;}
   if(taskStatsTimer){clearInterval(taskStatsTimer);taskStatsTimer=null;}
-  resetSystemStatusUi();
+  setText('sys-summary','Monitoring paused; last sample shown');
 }
 function toggleSystemMonitor(){
   const t=$('sys-monitor-tgl');
   if(t&&t.checked)startSystemMonitor();else stopSystemMonitor();
 }
 function initSystemMonitor(){
-  stopSystemMonitor();
+  resetSystemStatusUi();
+  loadSystemStatus(true);
+  loadTaskStats(true);
 }
 function escapeHtml(s){
   return String(s===undefined?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2572,8 +2583,8 @@ function parseTaskStats(text){
   }
   return rows;
 }
-async function loadTaskStats(){
-  if(!systemStatusEnabled)return;
+async function loadTaskStats(once=false){
+  if(!systemStatusEnabled&&!once)return;
   return runPoll('task_stats',async()=>{
     const tb=$('sys-task-rows');if(!tb)return;
     try{
@@ -2593,11 +2604,12 @@ async function loadTaskStats(){
     }
   });
 }
-async function loadSystemStatus(){
-  if(!systemStatusEnabled)return;
+async function loadSystemStatus(once=false){
+  if(!systemStatusEnabled&&!once)return;
   return runPoll('system_status',async()=>{
     try{
       const d=await fetchPollJson('/system_status',2500);
+      if(!d.chip||d.cpu_mhz===undefined)throw new Error('incomplete-system-status');
       const heapUsed=(d.heap_total||0)-(d.heap_free||0);
       const internalTotal=d.internal_total||d.sram_bytes||0;
       const internalFree=d.internal_free||0;
@@ -3040,19 +3052,28 @@ function wifiAuthLabel(a){
   return 'AUTH'+(Number.isFinite(n)?n:'?');
 }
 async function scanWifi(){
-  $('scan-btn').textContent='Scanning...';$('scan-btn').disabled=true;
+  setText('scan-btn','Scanning...');$('scan-btn').disabled=true;
+  const ctrl=new AbortController();const timeout=setTimeout(()=>ctrl.abort(),10000);
   try{
-    const r=await fetch('/wifi_scan');const d=await r.json();
+    const r=await fetch('/wifi_scan?force=1',{cache:'no-store',signal:ctrl.signal});const d=await r.json();
+    if(!r.ok||d.ok===false)throw new Error(d.error||('HTTP '+r.status));
+    if(!Array.isArray(d.networks))throw new Error('invalid-scan-response');
+    setText('wifi-status',d.cached?'Recent scan results':'Scan complete');$('wifi-status').style.color='var(--ok)';
     const el=$('wifi-nets');
     if(!d.networks.length){el.innerHTML='<div style="padding:8px;font-size:11px;color:var(--tx3);text-align:center">No networks found</div>';el.style.display='block';}
     else{el.innerHTML=d.networks.map(n=>'<div data-wifi-ssid="'+escapeHtml(n.ssid)+'" style="padding:6px 10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd);font-size:12px" onmouseover="this.style.background=\'var(--bg)\'" onmouseout="this.style.background=\'\'"><span>'+(n.enc?'\uD83D\uDD12 ':'')+escapeHtml(n.ssid)+'</span><span style="color:var(--tx3);font-size:10px">'+rssiIcon(n.rssi)+' '+n.rssi+'dBm CH'+n.ch+' '+wifiAuthLabel(n.auth)+'</span></div>').join('');el.querySelectorAll('[data-wifi-ssid]').forEach(row=>row.onclick=()=>pickWifi(row.dataset.wifiSsid||''));el.style.display='block';}
-  }catch(e){$('wifi-status').textContent='Scan failed';$('wifi-status').style.color='var(--err)';}
-  $('scan-btn').textContent='Scan';$('scan-btn').disabled=false;
+  }catch(e){
+    const reason=e.message==='ESP_ERR_WIFI_STATE'?'WiFi is connecting; retry scan shortly':(e.name==='AbortError'?'Scan timed out':e.message);
+    setText('wifi-status',trText('Scan failed')+': '+trText(reason));$('wifi-status').style.color='var(--err)';
+    $('wifi-nets').textContent=trText(reason);$('wifi-nets').style.display='block';
+  }finally{clearTimeout(timeout);setText('scan-btn','Scan');$('scan-btn').disabled=false;}
 }
 function pickWifi(ssid){
   $('wifi-ssid').value=ssid;$('wifi-nets').style.display='none';$('wifi-pass').focus();
 }
 let wifiSlotCache={count:0,max:4,active:-1,networks:[]};
+let wifiSlotsLoaded=false;
+let wifiSlotsError=false;
 let wifiStatusCache={};
 function escapeHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function renderWifiSlots(){
@@ -3060,6 +3081,11 @@ function renderWifiSlots(){
   if(!list)return;
   const nets=wifiSlotCache.networks||[];
   const max=wifiSlotCache.max||4;
+  if(!wifiSlotsLoaded){
+    cnt.textContent='(--/'+max+')';
+    list.textContent=trText(wifiSlotsError?'Saved networks unavailable':'Loading saved networks...');
+    return;
+  }
   const active=wifiSlotCache.active;
   const connectedSsid=wifiStatusCache.connected?String(wifiStatusCache.ssid||''):'';
   const tryingIdx=(!wifiStatusCache.connected&&wifiStatusCache.connecting)?active:-1;
@@ -3092,10 +3118,17 @@ async function loadWifiNetworks(){
   return runPoll('wifi_networks',async()=>{
     try{
       const d=await fetchPollJson('/wifi_networks',2000);
+      if(!Array.isArray(d.networks)||typeof d.count!=='number')throw new Error('invalid-saved-networks');
       wifiSlotCache=d;
+      wifiSlotsLoaded=true;wifiSlotsError=false;
       renderWifiSlots();
-    }catch(e){}
+    }catch(e){wifiSlotsError=true;renderWifiSlots();}
   });
+}
+function initWifiPanel(){
+  renderWifiSlots();
+  loadWifiNetworks();
+  loadWifiStatus();
 }
 async function loadWifiStatus(){
   return runPoll('wifi_status',async()=>{
@@ -3103,13 +3136,15 @@ async function loadWifiStatus(){
     wifiStatusCache=d;
     dashboardStaIp=d.connected&&d.ip?d.ip:'';
     if(typeof d.active==='number')wifiSlotCache.active=d.active;
+    if(!wifiSlotsLoaded||d.count!==(wifiSlotCache.networks||[]).length||
+       (d.connected&&!(wifiSlotCache.networks||[]).some(n=>n.ssid===d.ssid)))await loadWifiNetworks();
     renderWifiSlots();
     const stName=d.wifi_status_name||('status '+(d.wifi_status===undefined?'?':d.wifi_status));
     const stCode=d.wifi_status===undefined?'?':d.wifi_status;
     const age=d.attempt_age_s===undefined?'':(' \u2022 '+d.attempt_age_s+'s');
     const reason=(d.disconnect_reason_name&&d.disconnect_reason_name!=='none')?(' \u2022 '+d.disconnect_reason_name+'('+d.disconnect_reason+')'):'';
     if(d.connected){
-      setText('wifi-status',(d.ip&&d.ip!==location.hostname)?('Connected: '+(d.ssid||'')+' \u2022 '+d.ip+' \u2022 switch to that WiFi and open this IP'):('Connected: '+(d.ssid||'')+' \u2022 '+d.ip));
+      setText('wifi-status','Connected: '+(d.ssid||'')+' \u2022 '+(d.ip||''));
       $('wifi-status').style.color='var(--ok)';
     }
     else if(d.connecting&&d.ssid){
@@ -3540,11 +3575,11 @@ window.addEventListener('resize',()=>{
 });
 document.addEventListener('visibilitychange',()=>{
   if(!dashboardVisible())return;
-  poll();loadWifiStatus();loadApStatus();loadGatewayStatus();
-  if(!networkPerformanceMode&&!isCarUiActive()){loadWifiNetworks();loadGatewayBlocked();loadGatewayDns(true);}
+  poll();loadWifiStatus();loadWifiNetworks();loadApStatus();loadGatewayStatus();
+  if(!networkPerformanceMode&&!isCarUiActive()){loadGatewayBlocked();loadGatewayDns(true);}
   if(canDebugEnabled){pollLog();pollSniffer();pollRec();}
 });
-orderDashboardCards();initCardMinimizers();initSubsectionMinimizers();if(isCarUiActive())expandCarEssentials();initSystemMonitor();positionCanDebugPanels();setCanDebugUi();updateHW4(1);updateProfileControls(1,0,true);updateSniffIdToggle();loadGatewayDnsCached();loadGatewayDns(true);loadGatewayStatus();if(!networkPerformanceMode&&!isCarUiActive())loadGatewayBlocked();poll();
+orderDashboardCards();initCardMinimizers();initSubsectionMinimizers();if(isCarUiActive())expandCarEssentials();initSystemMonitor();initWifiPanel();positionCanDebugPanels();setCanDebugUi();updateHW4(1);updateProfileControls(1,0,true);updateSniffIdToggle();loadGatewayDnsCached();loadGatewayDns(true);loadGatewayStatus();if(!networkPerformanceMode&&!isCarUiActive())loadGatewayBlocked();poll();
 </script>
 </body>
 </html>

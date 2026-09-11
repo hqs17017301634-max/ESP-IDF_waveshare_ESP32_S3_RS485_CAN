@@ -708,16 +708,29 @@ int WiFiClass::scanNetworks(bool, bool, bool, uint32_t)
 {
     ensure();
     scanRecords_.clear();
+    scanError_ = ESP_OK;
     wifi_mode_t mode = WIFI_MODE_NULL;
-    if (esp_wifi_get_mode(&mode) == ESP_OK && mode == WIFI_MODE_AP)
-        esp_wifi_set_mode(WIFI_MODE_APSTA);
-    if (esp_wifi_scan_start(nullptr, true) != ESP_OK)
-        return 0;
+    scanError_ = esp_wifi_get_mode(&mode);
+    if (scanError_ != ESP_OK) return -1;
+    if (mode == WIFI_MODE_AP)
+    {
+        scanError_ = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (scanError_ != ESP_OK) return -1;
+    }
+    scanError_ = esp_wifi_scan_start(nullptr, true);
+    if (scanError_ != ESP_OK) return -1;
     uint16_t count = 0;
-    esp_wifi_scan_get_ap_num(&count);
+    scanError_ = esp_wifi_scan_get_ap_num(&count);
+    if (scanError_ != ESP_OK) return -1;
+    if (count > 40) count = 40; // UI displays at most 20; keep allocation bounded.
     scanRecords_.resize(count);
     if (count)
-        esp_wifi_scan_get_ap_records(&count, scanRecords_.data());
+        scanError_ = esp_wifi_scan_get_ap_records(&count, scanRecords_.data());
+    if (scanError_ != ESP_OK)
+    {
+        scanRecords_.clear();
+        return -1;
+    }
     scanRecords_.resize(count);
     return static_cast<int>(scanRecords_.size());
 }

@@ -440,6 +440,7 @@ public:
     IPAddress softAPIP();
     int softAPgetStationNum();
     int scanNetworks(bool async = false, bool hidden = false, bool passive = false, uint32_t maxMsPerChan = 300);
+    const char *lastScanErrorName() const { return esp_err_to_name(scanError_); }
     String SSID(int index);
     String SSID();
     int32_t RSSI(int index);
@@ -456,6 +457,7 @@ private:
     esp_netif_t *apNetif_ = nullptr;
     esp_netif_t *staNetif_ = nullptr;
     std::vector<wifi_ap_record_t> scanRecords_;
+    esp_err_t scanError_ = ESP_OK;
 };
 
 extern WiFiClass WiFi;
