@@ -2,6 +2,7 @@
 
 #include "../can_frame_types.h"
 #include "can_driver.h"
+#include "../shared_types.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
 #include <driver/twai.h>
@@ -16,7 +17,7 @@
 #define TWAI_RX_QUEUE_LEN 32
 #endif
 #ifndef TWAI_TX_QUEUE_LEN
-#define TWAI_TX_QUEUE_LEN 16
+#define TWAI_TX_QUEUE_LEN 0
 #endif
 #ifndef TWAI_READ_DRAIN_BUDGET
 #define TWAI_READ_DRAIN_BUDGET TWAI_RX_QUEUE_LEN
@@ -52,47 +53,97 @@ public:
 
     void setFilters(const uint32_t *ids, uint8_t count) override
     {
-        if (count == 0)
-            return;
-
-        twai_filter_config_t nextFilter = f_config_;
-        configureMaskFilter(nextFilter, ids, count);
-
+        if (!ids || count == 0) return;
+        count = count < kMaxExactFilters ? count : kMaxExactFilters;
         lock();
-        // TWAI only has a mask filter, so sparse ID sets can pass false positives.
-        exactFilterCount_ = (count < kMaxExactFilters) ? count : kMaxExactFilters;
-        for (uint8_t i = 0; i < exactFilterCount_; i++)
-            exactFilterIds_[i] = ids[i];
-        diagnostics_.exactFilterCount = exactFilterCount_;
-        f_config_ = nextFilter;
+        bool same = count == exactFilterCount_;
+        for (uint8_t i=0; same && i<count; ++i)
+            same = exactFilterMatchesLocked(ids[i]);
+        if (same) { unlock(); return; }
+        configureMaskFilter(f_config_, ids, count);
+        exactFilterCount_ = count;
+        for (uint8_t i=0; i<count; ++i) exactFilterIds_[i]=ids[i];
+        diagnostics_.exactFilterCount=count;
         stopAndUninstallLocked();
-        driverOK_ = installAndStartLocked();
+        if (!suspended_) driverOK_=installAndStartLocked();
         unlock();
     }
 
-    bool enableInterrupt(void (* /*onReady*/)()) override { return false; }
+    bool enableInterrupt(void (*)()) override { return false; }
+    void setPriorityFilters(const uint32_t *ids, uint8_t count) override { setFilters(ids,count); }
 
-    void setPriorityFilters(const uint32_t *ids, uint8_t count) override
+    uint32_t controllerEpoch() const override { return generation_; }
+
+    SubmitResult trySend(const CanFrame &frame, uint32_t expectedEpoch) override
     {
-        if (count == 0)
-            return;
-
-        twai_filter_config_t nextFilter = f_config_;
-        configureMaskFilter(nextFilter, ids, count);
-
-        lock();
-        // Narrow the software whitelist to the priority set as well. TWAI's
-        // single mask filter cannot precisely reject the dropped diagnostic
-        // IDs, so without this they would still pass software filtering and
-        // reach the handler — i.e. the priority filter would be a no-op.
-        exactFilterCount_ = (count < kMaxExactFilters) ? count : kMaxExactFilters;
-        for (uint8_t i = 0; i < exactFilterCount_; i++)
-            exactFilterIds_[i] = ids[i];
-        diagnostics_.exactFilterCount = exactFilterCount_;
-        f_config_ = nextFilter;
-        stopAndUninstallLocked();
-        driverOK_ = installAndStartLocked();
+        if (!mutex_ || xSemaphoreTake(mutex_, 0) != pdTRUE) return SubmitResult::Busy;
+        if (expectedEpoch != generation_) { unlock(); return SubmitResult::Stale; }
+        twai_status_info_t status = {};
+        if (!driverOK_ || suspended_ || twai_get_status_info(&status) != ESP_OK ||
+            status.state != TWAI_STATE_RUNNING || frame.extended || frame.remote ||
+            frame.id > 0x7FF || frame.dlc > 8)
+        {
+            ++diagnostics_.txFailed;
+            unlock();
+            if (onSendFrame) onSendFrame(frame,false);
+            return SubmitResult::Failed;
+        }
+        if (status.msgs_to_tx != 0) { unlock(); return SubmitResult::Busy; }
+        twai_message_t msg = {};
+        msg.identifier=frame.id; msg.data_length_code=frame.dlc;
+        memcpy(msg.data,frame.data,frame.dlc);
+        const esp_err_t error=twai_transmit(&msg,0);
         unlock();
+        if (error == ESP_OK) {
+            if (onSendFrame) onSendFrame(frame,true);
+            return SubmitResult::Accepted;
+        }
+        // With a disabled driver TX queue ESP_FAIL means its sole TX buffer
+        // was occupied. Neither this nor timeout means the frame was accepted.
+        if (error == ESP_FAIL || error == ESP_ERR_TIMEOUT) return SubmitResult::Busy;
+        ++diagnostics_.txFailed;
+        if (onSendFrame) onSendFrame(frame,false);
+        return SubmitResult::Failed;
+    }
+
+    bool quiesce(uint32_t drainMs) override
+    {
+        const uint32_t start=millis();
+        lock();
+        suspended_=true;
+        ++generation_;
+        if (!driverInstalled_) { unlock(); return true; }
+        twai_status_info_t status = {};
+        while (twai_get_status_info(&status) == ESP_OK && status.state == TWAI_STATE_RUNNING &&
+               status.msgs_to_tx && millis()-start < drainMs)
+        {
+            unlock(); vTaskDelay(pdMS_TO_TICKS(1)); lock();
+        }
+        if (status.msgs_to_tx) ++diagnostics_.quiesceUnknown;
+        const esp_err_t stopped=twai_stop();
+        const bool quiet=stopped == ESP_OK ||
+            (twai_get_status_info(&status) == ESP_OK && status.state != TWAI_STATE_RUNNING);
+        driverOK_=false;
+        unlock();
+        return quiet;
+    }
+
+    bool resume() override
+    {
+        lock();
+        if (!suspended_) { const bool ok=driverOK_; unlock(); return ok; }
+        suspended_=false;
+        ++generation_;
+        if (!driverInstalled_) driverOK_=installAndStartLocked();
+        else {
+            twai_status_info_t status = {};
+            if (twai_get_status_info(&status) == ESP_OK) {
+                if (status.state == TWAI_STATE_STOPPED) driverOK_=twai_start() == ESP_OK;
+                else if (status.state == TWAI_STATE_RUNNING) driverOK_=true;
+                else if (status.state == TWAI_STATE_BUS_OFF) initiateRecoveryLocked();
+            }
+        }
+        const bool ok=driverOK_; unlock(); return ok;
     }
 
     bool read(CanFrame &frame) override
@@ -102,6 +153,7 @@ public:
         for (uint16_t attempt = 0; attempt < kReadDrainBudget; attempt++)
         {
             lock();
+            if (suspended_) { unlock(); return false; }
             if (!driverOK_)
             {
                 tryRecover();
@@ -208,7 +260,7 @@ private:
 
     void serviceAlerts()
     {
-        if (!driverInstalled_)
+        if (!driverInstalled_ || suspended_)
             return;
         uint32_t alerts = 0;
         if (twai_read_alerts(&alerts, 0) != ESP_OK)
@@ -228,46 +280,15 @@ private:
         {
             diagnostics_.recoverCount++;
             lock();
+            ++generation_;
             driverOK_ = twai_start() == ESP_OK;
             unlock();
         }
     }
 
-    bool sendWithPolicy(const CanFrame &frame, bool critical)
+    bool sendWithPolicy(const CanFrame &frame, bool /*critical*/)
     {
-        serviceAlerts();
-        lock();
-        if (!driverOK_)
-        {
-            unlock();
-            if (onSendFrame)
-                onSendFrame(frame, false);
-            return false;
-        }
-
-        twai_message_t msg = {};
-        uint8_t dlc = (frame.dlc <= 8) ? frame.dlc : 8;
-        msg.identifier = frame.id;
-        msg.data_length_code = dlc;
-        memcpy(msg.data, frame.data, dlc);
-
-        bool ok = twai_transmit(&msg, pdMS_TO_TICKS(2)) == ESP_OK;
-        if (!ok && critical)
-        {
-            diagnostics_.txRetry++;
-            vTaskDelay(pdMS_TO_TICKS(1));
-            ok = twai_transmit(&msg, pdMS_TO_TICKS(2)) == ESP_OK;
-        }
-        if (!ok)
-        {
-            diagnostics_.txFailed++;
-            if (isBusOff())
-                recoverWithCooldownLocked();
-        }
-        unlock();
-        if (onSendFrame)
-            onSendFrame(frame, ok);
-        return ok;
+        return trySend(frame,controllerEpoch()) == SubmitResult::Accepted;
     }
 
     bool exactFilterMatchesLocked(uint32_t id) const
@@ -330,6 +351,7 @@ private:
         if (!driverInstalled_)
             return;
         diagnostics_.recoverCount++;
+        ++generation_;
         driverOK_ = false;
         if (twai_initiate_recovery() != ESP_OK)
         {
@@ -352,6 +374,7 @@ private:
 
     bool installAndStartLocked()
     {
+        ++generation_;
         if (twai_driver_install(&g_config_, &t_config_, &f_config_) != ESP_OK)
         {
             driverInstalled_ = false;
@@ -378,6 +401,7 @@ private:
 
     void stopAndUninstallLocked()
     {
+        ++generation_;
         if (!driverInstalled_)
             return;
         twai_stop();
@@ -386,6 +410,8 @@ private:
         driverOK_ = false;
     }
 
+    Shared<uint32_t> generation_{1};
+    bool suspended_ = false;
     gpio_num_t txPin_;
     gpio_num_t rxPin_;
     twai_general_config_t g_config_;

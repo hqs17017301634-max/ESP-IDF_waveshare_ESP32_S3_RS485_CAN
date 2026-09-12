@@ -509,6 +509,8 @@ private:
 class UpdateClass
 {
 public:
+    bool (*beforeBegin)() = nullptr;
+    void (*afterAbort)() = nullptr;
     bool begin(size_t size);
     size_t write(const uint8_t *buf, size_t len);
     size_t writeStream(WiFiClient &stream);
@@ -527,6 +529,7 @@ private:
     bool running_ = false;
     bool finished_ = false;
     bool error_ = false;
+    bool lifecycleHeld_ = false;
     std::string errorText_;
 };
 

@@ -32,6 +32,7 @@ def main():
         if suite.name.endswith('injection_after_ap'): flags=['-DENHANCED_AUTOPILOT','-DINJECTION_AFTER_AP']
         if suite.name.endswith('nag'): flags=['-DNAG_KILLER']
         if suite.name.endswith('mcp2515_recovery'): flags=['-DPIN_CAN_INTERRUPT=2','-I'+str(suite)]
+        if suite.name.endswith('twai_runtime'): flags=['-I'+str(suite)]
         exe=out/(suite.name+'.exe')
         cmd=[str(CXX),'-std=c++17','-DNATIVE_BUILD',*flags,'-I'+str(tree/'include'),'-I'+str(UNITY),
              *map(str,suite.glob('*.cpp')),str(UNITY/'unity.c'),'-o',str(exe)]

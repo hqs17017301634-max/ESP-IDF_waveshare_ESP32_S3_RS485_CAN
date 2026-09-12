@@ -24,8 +24,6 @@
 // (persisted in NVS and survive firmware updates).
 #define DASH_SSID "EVtools"      // WiFi AP name
 #define DASH_PASS "changeme"     // WiFi password (min 8 chars)
-#define DASH_OTA_USER "admin"    // OTA username
-#define DASH_OTA_PASS "changeme" // OTA password
 
 // #define DASH_INJECTION_ON_BOOT  // Start injecting automatically after boot; default is stopped
 

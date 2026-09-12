@@ -30,8 +30,9 @@ static void compose_contracts()
     assert(sameSource.finalize(second) == ComposeResult::AlreadyFinalized);
     TxBroker broker;
     MockDriver driver;
-    assert(broker.submit(request, driver));
-    assert(!broker.submit(request, driver));
+    assert(broker.enqueue(request));
+    assert(broker.service(driver,100,1,FrameProtocol::HW3));
+    assert(!broker.enqueue(request));
     assert(driver.sent.size() == 1);
 
     FrameContext fresh(original, 2, FrameProtocol::HW3, 101);
@@ -39,7 +40,8 @@ static void compose_contracts()
     next.bits(FeatureId::Fsd, 5, 0x40, 0x40);
     TxRequest nextRequest;
     assert(next.finalize(nextRequest) == ComposeResult::Ready);
-    assert(broker.submit(nextRequest, driver)); // equal payload, distinct RX
+    assert(broker.enqueue(nextRequest));
+    assert(broker.service(driver,101,1,FrameProtocol::HW3)); // equal payload, distinct RX
     assert(driver.sent.size() == 2);
 }
 
@@ -116,10 +118,11 @@ static void refresh_and_failure_contracts()
     assert(plan.finalize(request) == ComposeResult::Ready);
     RejectDriver driver;
     TxBroker broker;
-    bool ok = broker.submit(request, driver);
+    assert(broker.enqueue(request));
+    bool ok = broker.service(driver,21,1,FrameProtocol::HW4);
     hw4.onSubmitted(request, ok, 21);
     assert(!ok && hw4.framesSent == 0);
-    assert(!broker.submit(request, driver) && driver.attempts == 1);
+    assert(!broker.enqueue(request) && driver.attempts == 1);
 }
 
 static void speed_queue_commit_contract()

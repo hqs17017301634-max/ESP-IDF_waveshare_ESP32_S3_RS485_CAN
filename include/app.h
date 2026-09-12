@@ -51,6 +51,8 @@ static CarManagerBase *appActiveHandler = nullptr;
 static TxBroker appTxBroker;
 static uint64_t appSourceSequence = 0;
 
+#include "can_runtime_fence.h"
+
 #if defined(ESP_PLATFORM) && defined(DRIVER_TWAI)
 static volatile bool appCanTaskDedicated = false;
 static volatile uint32_t appCanTaskLoops = 0;
@@ -215,6 +217,9 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
 template <typename Driver>
 static bool appLoop()
 {
+    if (appConfigPending) return false;
+    AppCanLock runtimeLock(false);
+    if (!runtimeLock.held || appTxPaused) return false;
 #if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);
 #endif
@@ -261,14 +266,16 @@ static bool appLoop()
         }
         else
         {
-            FrameContext context(original, ++appSourceSequence, h->protocol(), millis());
+            FrameContext context(original, ++appSourceSequence, h->protocol(), millis(),
+                                 appConfigEpoch, appDriver->controllerEpoch());
             FrameCoordinator plan(context);
             h->collectIntents(original, plan);
             dashCollectPostIntents(*h, original, plan);
-            submitComposedFrame(*h, plan, appTxBroker, *appDriver, millis(), []() -> uint32_t { return millis(); });
+            submitComposedFrame(*h, plan, appTxBroker, *appDriver, millis(), []() -> uint32_t { return millis(); }, dashQueuedRequestAllowed);
         }
 #else
-        FrameContext context(frame, ++appSourceSequence, h->protocol(), millis());
+        FrameContext context(frame, ++appSourceSequence, h->protocol(), millis(),
+                             appConfigEpoch, appDriver->controllerEpoch());
         FrameCoordinator plan(context);
         h->collectIntents(frame, plan);
         submitComposedFrame(*h, plan, appTxBroker, *appDriver, millis(), []() -> uint32_t { return millis(); });
@@ -284,5 +291,6 @@ static bool appLoop()
 #if !(defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_RGB_STATUS_LED))
     digitalWrite(PIN_LED, HIGH);
 #endif
-    return processedFrame;
+    const bool submitted = appTxBroker.service(*appDriver,millis(),appConfigEpoch,h->protocol());
+    return processedFrame || submitted;
 }

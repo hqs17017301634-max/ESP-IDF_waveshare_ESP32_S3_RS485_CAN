@@ -55,7 +55,7 @@ def main():
     dashboard = (ROOT/'include/web/mcp2515_dashboard.h').read_text(encoding='utf-8')
     assert 'CanDriver' not in handlers and 'sendCritical(' not in handlers
     assert 'sendCritical(' not in dashboard
-    assert 'driver.sendCritical(' in (ROOT/'include/tx_broker.h').read_text(encoding='utf-8')
+    assert 'driver.trySend(' in (ROOT/'include/tx_broker.h').read_text(encoding='utf-8')
     (OUT/'report.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
     print('Migration comparison and contract checks passed')
 

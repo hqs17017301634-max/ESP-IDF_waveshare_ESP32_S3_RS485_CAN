@@ -11,6 +11,9 @@ enum class FeatureId : uint8_t { Fsd, Profile, Hw3Speed, LegacyMpp, Ready, Isa, 
 enum class RefreshPolicy : uint8_t { ChangedOnly, EverySource };
 enum class ComposeResult : uint8_t { Ready, NoIntent, NoChange, Invalid, Conflict, AlreadyFinalized };
 
+// Software-dequeue age only. Provisional bound, not a physical RX deadline.
+inline constexpr uint32_t kTxMaxDequeueAgeMs = 20;
+
 struct FrameContext
 {
     const CanFrame original;
@@ -18,9 +21,13 @@ struct FrameContext
     const FrameProtocol protocol;
     // This timestamp is taken at software dequeue, not at physical reception.
     const uint32_t dequeuedAtMs;
+    const uint32_t configEpoch;
+    const uint32_t controllerEpoch;
 
-    FrameContext(const CanFrame &frame, uint64_t sequence, FrameProtocol mode, uint32_t now)
-        : original(frame), sourceSequence(sequence), protocol(mode), dequeuedAtMs(now) {}
+    FrameContext(const CanFrame &frame, uint64_t sequence, FrameProtocol mode, uint32_t now,
+                 uint32_t config = 1, uint32_t controller = 1)
+        : original(frame), sourceSequence(sequence), protocol(mode), dequeuedAtMs(now),
+          configEpoch(config), controllerEpoch(controller) {}
     FrameContext(const FrameContext &) = delete;
     FrameContext &operator=(const FrameContext &) = delete;
 private:
@@ -46,6 +53,7 @@ public:
     TxRequest &operator=(const TxRequest &) = delete;
     const CanFrame &frame() const { return frame_; }
     uint64_t sourceSequence() const { return sequence_; }
+    FrameProtocol protocol() const { return protocol_; }
     uint32_t owners() const { return owners_; }
     bool hasOwner(FeatureId owner) const { return (owners_ & (1U << unsigned(owner))) != 0; }
 private:
@@ -56,6 +64,9 @@ private:
     uint32_t owners_ = 0;
     bool ready_ = false;
     bool consumed_ = false;
+    FrameProtocol protocol_ = FrameProtocol::HW3;
+    uint32_t configEpoch_ = 1, controllerEpoch_ = 1;
+    uint32_t dequeuedAtMs_ = 0, deadlineMs_ = 0;
 };
 
 class FrameCoordinator
@@ -64,6 +75,7 @@ public:
     explicit FrameCoordinator(FrameContext &context) : context_(context) {}
     const CanFrame &source() const { return context_.original; }
     uint32_t nowMs() const { return context_.dequeuedAtMs; }
+    uint32_t configEpoch() const { return context_.configEpoch; }
 
     bool submit(const FieldIntent &intent)
     {
@@ -137,6 +149,11 @@ public:
         request.frame_ = candidate;
         request.sequence_ = context_.sourceSequence;
         request.owners_ = owners_;
+        request.protocol_ = context_.protocol;
+        request.configEpoch_ = context_.configEpoch;
+        request.controllerEpoch_ = context_.controllerEpoch;
+        request.dequeuedAtMs_ = context_.dequeuedAtMs;
+        request.deadlineMs_ = context_.dequeuedAtMs + kTxMaxDequeueAgeMs;
         request.ready_ = true;
         return ComposeResult::Ready;
     }

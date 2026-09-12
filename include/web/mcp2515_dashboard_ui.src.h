@@ -873,7 +873,6 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
       <div class="ota-status" id="ota-status">Uploading...</div>
     </div>
     <button class="ota-btn" id="ota-upload-btn" onclick="uploadFirmware()">Flash Firmware</button>
-    <button class="sniff-btn" id="ota-reset-btn" onclick="resetOtaCredentials()" style="width:100%;margin-top:6px">Reset OTA Credentials</button>
     <div style="margin-top:10px;font-size:11px;color:var(--tx3);line-height:1.7">
       Use the generated PlatformIO firmware.bin for this board.<br>
       Current build path: <span style="color:var(--acc);font-family:monospace">.pio/build/waveshare_ESP32_S3_RS485_CAN/firmware.bin</span>
@@ -982,8 +981,8 @@ body:not(.can-debug-on) .can-debug-panel{display:none !important}
 <span class="ok">&#x2705;</span> DNS &#x8FC7;&#x6EE4;&#x4E0E;&#x89E3;&#x6790;&#x6548;&#x7387;
 <span class="ok">&#x2705;</span> &#x81EA;&#x5B9A;&#x4E49;&#x9650;&#x901F;
 
-Version: 3.0.0-beta.7
-OTA timestamp: 2026-09-12 00:54:30 +08:00</div>
+Version: 3.0.0-beta.8
+OTA timestamp: 2026-09-12 09:44:59 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOwnerNotice()">&#x77E5;&#x9053;&#x4E86;</button>
     </div>
@@ -1004,8 +1003,8 @@ OTA timestamp: 2026-09-12 00:54:30 +08:00</div>
 <div class="modal-backdrop" id="ota-test-modal" onclick="otaTestBackdrop(event)">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ota-test-title">
     <div class="modal-title" id="ota-test-title">OTA Test v2</div>
-    <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.7
-OTA timestamp: 2026-09-12 00:54:30 +08:00</div>
+    <div class="modal-msg" id="ota-test-msg">Version: 3.0.0-beta.8
+OTA timestamp: 2026-09-12 09:44:59 +08:00</div>
     <div class="modal-actions">
       <button class="sniff-btn modal-btn-primary" onclick="closeOtaTestNotice()">Close</button>
     </div>
@@ -1063,7 +1062,7 @@ const I18N_ZH={
 'WiFi Hotspot':'WiFi 热点','Change the WiFi hotspot name and password':'修改 WiFi 热点名称和密码','SSID':'SSID','Password':'密码','Hidden':'隐藏','WiFi Internet':'WiFi 互联网','Not configured':'未配置','Save up to 4 networks (e.g. home + phone hotspot).':'最多保存 4 个网络（如家庭 WiFi + 手机热点）。','Add network':'添加网络','WiFi SSID':'WiFi SSID','Scan':'扫描','Save & Connect':'保存并连接','Use static IP':'使用静态 IP',
 'STA-AP Gateway':'STA-AP 网关','Gateway status unavailable':'网关状态不可用','Gateway':'网关','Enable STA-AP NAT routing for hotspot clients when WiFi Internet is connected.':'WiFi 互联网连接后，为热点客户端启用 STA-AP NAT 路由。','Conservative Mode':'保守模式','Aggressive Mode':'激进模式','Conservative Mode: WiFi access / offline navigation / online navigation / China maps / WeChat notifications / Bluetooth music / voice assistant.':'保守模式：WiFi 接入 / 离线导航 / 在线导航 / 中国地图 / 微信通知 / 蓝牙音乐 / 车机语音助手。','Aggressive Mode: WiFi access / offline navigation / online navigation / China maps / WeChat notifications / Bluetooth music / voice assistant / app vehicle control.':'激进模式：WiFi 接入 / 离线导航 / 在线导航 / 中国地图 / 微信通知 / 蓝牙音乐 / 车机语音助手 / 控车。','Custom DNS profile':'自定义 DNS 配置','Blacklist':'黑名单','Whitelist':'白名单','Save DNS':'保存 DNS','Blocked':'阻断记录','DNS Filter List':'DNS 过滤清单','Add to Whitelist':'加入白名单','Blacklisted':'黑名单','Already whitelisted':'已在白名单','Clear':'清空','No blocked domains recorded':'没有阻断记录','Cleared':'已清空','Gateway not available':'网关不可用','domain is blacklisted':'域名在黑名单中，禁止加入白名单','cannot add domain':'无法加入域名',
 'CAN Pins':'CAN 引脚','default':'默认','TX GPIO':'TX GPIO','RX GPIO':'RX GPIO','Reboot required after saving custom pins.':'保存自定义引脚后需要重启。','Dashboard Log':'调试日志','Debug Log':'调试日志','Settings Backup':'设置备份','Export and import device settings':'导出和导入设备设置','Download':'下载','Import':'导入','Support':'支持','Open':'打开',
-'Firmware Update':'固件更新','Beta Channel':'Beta 通道','Include pre-release / beta firmware versions':'包含预发布 / beta 固件版本','Auto-Update on Boot':'启动后自动更新','Check and install updates automatically ~15 s after WiFi connects':'WiFi 连接约 15 秒后自动检查并安装更新','Check for Updates':'检查更新','Manual firmware upload':'手动上传固件','Tap to select firmware .bin':'点击选择固件 .bin','Or drag and drop a file here':'或将文件拖放到这里','Uploading...':'上传中...','Flash Firmware':'刷写固件','Reset OTA Credentials':'重置 OTA 凭据',
+'Firmware Update':'固件更新','Beta Channel':'Beta 通道','Include pre-release / beta firmware versions':'包含预发布 / beta 固件版本','Auto-Update on Boot':'启动后自动更新','Check and install updates automatically ~15 s after WiFi connects':'WiFi 连接约 15 秒后自动检查并安装更新','Check for Updates':'检查更新','Manual firmware upload':'手动上传固件','Tap to select firmware .bin':'点击选择固件 .bin','Or drag and drop a file here':'或将文件拖放到这里','Uploading...':'上传中...','Flash Firmware':'刷写固件',
   'System Health':'系统状态','System Status':'系统状态','Hardware and runtime health reported by the ESP32 firmware.':'ESP32 固件上报的硬件与运行状态。','CAN Debug':'CAN 调试','CAN调试':'CAN 调试','Enable CAN debug tools':'启用 CAN 调试工具','Shows firmware update, logs, sniffer and recorder panels':'显示固件更新、日志、嗅探器和记录器面板','Chip':'芯片','CPU':'CPU','CPU Load':'CPU 负载','Task Load':'任务负载','task':'任务','core':'核心','cpu%':'CPU%','stack':'栈余量','state':'状态','Task stats unavailable':'任务负载不可用','Core 0':'核心 0','Core 1':'核心 1','Board Specs':'板载规格','Temperature':'温度','Reset':'重启原因','Heap RAM':'堆内存','Largest Block':'最大连续内存块','Min Free Heap':'历史最低空闲内存','PSRAM':'PSRAM','Tasks':'任务','Flash':'Flash','SPIFFS':'SPIFFS','WiFi RSSI':'WiFi 信号','WiFi Mode':'WiFi 模式','AP Clients':'AP 客户端','Bluetooth LE':'蓝牙 LE','Wireless':'无线','MAC / Firmware':'MAC / 固件','System status unavailable':'系统状态不可用','Monitoring off':'监测关闭','Enable live hardware status sampling':'启用实时硬件状态采样','On':'开启','Off':'关闭','off':'关闭','not enabled':'未启用','unavailable':'不可用','offline':'离线','not present':'不存在','STA online':'STA 在线','STA offline':'STA 离线','supported':'支持','not supported':'不支持','firmware disabled':'固件未启用','warming up':'采样中',
 'CAN':'CAN','CAN Sniffer':'CAN 嗅探器','Pause':'暂停','Resume':'继续','Wire IDs':'线束 ID','CAN Recorder':'CAN 记录器','Start Recording':'开始记录','Stop Recording':'停止记录','Ready':'就绪','Saved':'已保存','Recording...':'记录中...','CAN Controller':'CAN 控制器','Last Write Check':'最后写入检查','Reset Stats':'重置统计',
 'Cancel':'取消','Continue':'继续','Confirm':'确认','Copy':'复制','Open GitHub Issue':'打开 GitHub Issue','Close':'关闭','Show':'显示','Hide':'隐藏','Loading...':'加载中...','Saving...':'保存中...','Saved! Reboot to apply.':'已保存！重启后生效。','Saved':'已保存','Error':'错误','Save failed':'保存失败','Connection error':'连接错误','Connection to ':'到 ',
@@ -1251,8 +1250,7 @@ Object.assign(I18N_ZH,{
   'Manual firmware upload (.bin)':'手动上传固件 (.bin)',
   'Upload a local firmware .bin file directly to the device.':'将本地固件 .bin 文件直接上传到设备。',
   'Done! Device is rebooting...':'完成！设备正在重启...',
-  'OTA Username:':'OTA 用户名：','OTA Password:':'OTA 密码：',
-  'Flashing...':'刷写中...','OTA Credentials Reset':'OTA 凭据已重置',
+  'Flashing...':'刷写中...',
   'Up to date':'已是最新','Update available':'发现可用更新',
   // CAN tools card
   'Sniffer, recorder and bus status':'嗅探、记录与总线状态',
@@ -1312,7 +1310,7 @@ Object.assign(I18N_ZH,{
   '80/100/110/120 km/h buckets. Max target: 120/150/155/155 km/h.':'80/100/110/120 km/h \u5206\u6bb5\u3002\u76ee\u6807\u4e0a\u9650\uff1a120/150/155/155 km/h\u3002',
   'Profiles are available on Legacy, HW3 and HW4.':'Legacy\u3001HW3 \u548c HW4 \u652f\u6301\u914d\u7f6e\u6863\u3002',
   'OTA Test v2':'OTA \u6d4b\u8bd5 v2',
-  'Version: 3.0.0-beta.7\nOTA timestamp: 2026-09-12 00:54:30 +08:00':'\u7248\u672c\uff1a3.0.0-beta.7\nOTA \u65f6\u95f4\uff1a2026-09-12 00:54:30 +08:00',
+  'Version: 3.0.0-beta.8\nOTA timestamp: 2026-09-12 09:44:59 +08:00':'\u7248\u672c\uff1a3.0.0-beta.8\nOTA \u65f6\u95f4\uff1a2026-09-12 09:44:59 +08:00',
   'AP':'AP',
   'STA':'STA',
   'DNS':'DNS',
@@ -1469,7 +1467,8 @@ let state={hw:1,can:true,sp:0,spAuto:true,hw3OffsetSlew:false,hw3SlewRate:25};
 let sniffPaused=false,sniffFrames=[];
 let sniffShowDbcIds=localStorage.getItem('sniffIdMode')==='dbc';
 let otaFile=null;
-let otaUser=localStorage.getItem('otaU')||'',otaPass=localStorage.getItem('otaP')||'';
+// Remove obsolete OTA credentials saved by older WebUI versions.
+localStorage.removeItem('otaU');localStorage.removeItem('otaP');
 let logSince=0;
 let dashConfirmState=null;
 let supportIssueUrl='https://github.com/ev-open-can-tools/ev-open-can-tools/issues/new?template=issue.yml';
@@ -2822,23 +2821,8 @@ function handleDrop(e){
   if(file&&file.name.endsWith('.bin'))fileSelected(file);
 }
 
-function resetOtaCredentials(){
-  localStorage.removeItem('otaU');
-  localStorage.removeItem('otaP');
-  otaUser='';
-  otaPass='';
-  const btn=$('ota-reset-btn');
-  if(btn){
-    btn.textContent='OTA Credentials Reset';
-    setTimeout(()=>{btn.textContent='Reset OTA Credentials';},1500);
-  }
-}
-
 async function uploadFirmware(){
   if(!otaFile)return;
-  if(!otaUser){otaUser=prompt('OTA Username:')||'';localStorage.setItem('otaU',otaUser);}
-  if(!otaPass){otaPass=prompt('OTA Password:')||'';localStorage.setItem('otaP',otaPass);}
-  if(!otaUser||!otaPass)return;
   const prog=$('ota-progress');
   const fill=$('ota-fill');
   const status=$('ota-status');
@@ -2871,7 +2855,7 @@ async function uploadFirmware(){
     status.style.color='var(--err)';
     $('ota-upload-btn').disabled=false;
   };
-  xhr.open('POST','/update',true,otaUser,otaPass);
+  xhr.open('POST','/update',true);
   xhr.setRequestHeader('Content-Type','application/octet-stream');
   xhr.setRequestHeader('X-File-Name',otaFile.name);
   xhr.setRequestHeader('X-File-Size',otaFile.size);
@@ -2913,7 +2897,7 @@ async function poll(){
     setText('s-mcp-raw','EFLG: 0x'+toHex(d.eflg,2));
     setFill('fps-fill',Math.min(fpsVal/20*100,100));
     setText('hw-badge',HW[d.hw]||'?');
-    updateGtwBadge(d.gtwap);
+    updateGtwBadge(d.gtw_status_filtered ? -1 : d.gtwap);
     try{renderEflg(d.eflg);}catch(e){}
     try{renderWriteProbe(d.probe);}catch(e){}
     if(d.mux){for(let i=0;i<3;i++){setText('m'+i+'rx',d.mux[i].rx);setText('m'+i+'tx',d.mux[i].tx);const e=$('m'+i+'err');if(e){e.textContent=d.mux[i].err;e.style.color=d.mux[i].err>0?'var(--err)':'';}}}

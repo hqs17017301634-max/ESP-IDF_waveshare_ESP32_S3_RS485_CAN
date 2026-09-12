@@ -38,6 +38,7 @@
 #include <SPIFFS.h>
 #endif
 #include "handlers.h"
+#include "can_filter_policy.h"
 #include "can_helpers.h"
 #include <ArduinoJson.h>
 #if defined(DRIVER_ESP32_EXT_MCP2515)
@@ -50,12 +51,6 @@
 #endif
 #ifndef DASH_PASS
 #error "Define -DDASH_PASS in build_flags (min 8 chars)"
-#endif
-#ifndef DASH_OTA_PASS
-#error "Define -DDASH_OTA_PASS in build_flags"
-#endif
-#ifndef DASH_OTA_USER
-#error "Define -DDASH_OTA_USER in build_flags"
 #endif
 
 static_assert(sizeof(DASH_SSID) > 1 && sizeof(DASH_SSID) <= 33, "DASH_SSID must be 1-32 bytes");
@@ -1202,6 +1197,13 @@ static void dashCollectPostIntents(CarManagerBase &handler, const CanFrame &orig
     collectFsdCompatibility(handler, plan,
         canActive && (!apInjectionGate || handler.injectionGateOpen()));
 }
+static bool dashQueuedRequestAllowed(const TxRequest &request)
+{
+    if (!canActive || dashSleepActive || appTxPaused) return false;
+    if (request.hasOwner(FeatureId::Fsd) && request.protocol() != FrameProtocol::HW4)
+        return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
+    return true;
+}
 static bool dashCheckNagDisabled()
 {
     return false;
@@ -1313,6 +1315,8 @@ static void dashSavePrefs()
 
 static void dashSetCanActive(bool active, const char *reason = nullptr)
 {
+    AppConfigTransaction transaction;
+    if (!transaction.ready) { dashLog("[CAN] Configuration deferred: quiesce failed"); return; }
     bool changed = (canActive != active) || (forceActivate != active);
     canActive = active;
     forceActivate = active;
@@ -1669,61 +1673,12 @@ static void dashApplyFilters()
 #endif
 }
 
-// CAN Priority Mode filter policy.
-// When priority mode is on AND FSD writes are armed, use a mode-specific
-// real-time filter set instead of "all IDs minus sleep diagnostics". This keeps
-// Legacy/HW3/HW4 from carrying unrelated frame reads into the TWAI mask.
-// Outside priority mode, restore the full handler filter set so sleep,
-// diagnostics and recorder keep working as before.
-static bool dashHandlerHasFilterId(const uint32_t *ids, uint8_t count, uint32_t id)
-{
-    for (uint8_t i = 0; i < count; i++)
-        if (ids[i] == id)
-            return true;
-    return false;
-}
-
-static void dashAppendPriorityId(uint32_t *out, uint8_t &count, uint8_t cap,
-                                 const uint32_t *all, uint8_t allCount, uint32_t id)
-{
-    if (count >= cap || !dashHandlerHasFilterId(all, allCount, id))
-        return;
-    for (uint8_t i = 0; i < count; i++)
-        if (out[i] == id)
-            return;
-    out[count++] = id;
-}
-
+// Preserve every enabled gate/sleep dependency in the priority RX whitelist.
 static uint8_t dashBuildCanPriorityIds(const uint32_t *all, uint8_t allCount,
-                                       uint32_t *out, uint8_t cap)
+                                      uint32_t *out, uint8_t cap)
 {
-    uint8_t pc = 0;
-    if (!all || allCount == 0 || !out || cap == 0)
-        return 0;
-
-    if (hwMode == 0)
-    {
-        // Legacy real-time path: follow-distance/profile source + activation
-        // frame. Optional MPP/AP-gate inputs are added only when their features
-        // need them because they widen the TWAI hardware mask significantly.
-        dashAppendPriorityId(out, pc, cap, all, allCount, 69);   // 0x045 STW_ACTN_RQ
-        dashAppendPriorityId(out, pc, cap, all, allCount, 1006); // 0x3EE AD mux frame
-        if (dashLegacyMppActive())
-            dashAppendPriorityId(out, pc, cap, all, allCount, 760); // 0x2F8 MPP speed limit
-        if (apInjectionGate)
-            dashAppendPriorityId(out, pc, cap, all, allCount, 921); // 0x399 AP active gate
-    }
-    else
-    {
-        // HW3/HW4 share the real-time activation inputs. 0x7FF is status-only
-        // for the dashboard, so priority mode drops it to keep the TWAI mask at
-        // about 16 standard-ID combinations instead of ~64 or worse.
-        dashAppendPriorityId(out, pc, cap, all, allCount, 921);  // 0x399 DAS_status
-        dashAppendPriorityId(out, pc, cap, all, allCount, 1016); // 0x3F8 driver assist control
-        dashAppendPriorityId(out, pc, cap, all, allCount, 1021); // 0x3FD autopilot control
-    }
-
-    return pc;
+    return buildCanPriorityIds(hwMode,dashLegacyMppActive(),apInjectionGate,
+                               dashAutoSleepEnabled,all,allCount,out,cap);
 }
 
 static void dashApplyCanFilterPolicy()
@@ -1825,7 +1780,7 @@ static void handleStatus()
     int sp = dashHandler ? (int)dashHandler->speedProfile : 0;
     bool spAuto = dashHandler ? (bool)dashHandler->speedProfileAuto : true;
     int soff = dashHandler ? (int)dashHandler->speedOffset : 0;
-    int gtwAp = dashHandler ? (int)dashHandler->gatewayAutopilot : -1;
+    int gtwAp = dashHandler && !dashCanPriorityFilterActive ? (int)dashHandler->gatewayAutopilot : -1;
     bool ep = dashHandler ? (bool)dashHandler->enablePrint : true;
     bool apGateOpen = dashApInjectionAllowed();
 
@@ -1859,6 +1814,7 @@ static void handleStatus()
     j += dashAutoSleepEnabled ? "true" : "false";
     j += ",\"canprio\":";
     j += dashCanPriorityMode ? "true" : "false";
+    j += ",\"gtw_status_filtered\":" + String(dashCanPriorityFilterActive ? "true" : "false");
     j += ",\"canprioActive\":";
     j += dashCanPriorityFilterActive ? "true" : "false";
     if (dashDriver)
@@ -2053,6 +2009,25 @@ static void handleStatus()
     j += ",\"txerr\":";
     j += txErrCount;
     j += ",\"txSemantics\":\"driver_accepted\",\"perFrameTxDoneKnown\":false";
+    j += ",\"tx_scheduler\":{\"policy\":\"fsd_first\",\"capacity\":16,\"high_reserved\":8,\"driver_tx_queue\":0,\"rx_queue\":64,\"max_dequeue_age_ms\":20";
+    j += ",\"config_epoch\":" + String(static_cast<uint32_t>(appConfigEpoch));
+    j += ",\"controller_epoch\":" + String(dashDriver ? dashDriver->controllerEpoch() : 0);
+    j += ",\"paused\":" + String(appTxPaused ? "true" : "false");
+    j += ",\"busy\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.busy));
+    j += ",\"expired\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.expired));
+    j += ",\"stale\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.stale));
+    j += ",\"full\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.full));
+    j += ",\"canceled\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.canceled));
+    j += ",\"exhausted\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.exhausted));
+    j += ",\"highAccepted\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.highAccepted));
+    j += ",\"normalAccepted\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.normalAccepted));
+    j += ",\"pending\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.pending));
+    j += ",\"pendingHigh\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.pendingHigh));
+    j += ",\"maxWaitMs\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.maxWaitMs));
+    j += ",\"highMaxWaitMs\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.highMaxWaitMs));
+    j += ",\"gateRejected\":" + String(static_cast<uint32_t>(appTxBroker.diagnostics.gateRejected));
+    j += ",\"quiesce_unknown\":" + String(dashDriver ? dashDriver->diagnostics().quiesceUnknown : 0);
+    j += "}";
     j += ",\"coordinator\":{\"composed\":";
     j += (uint32_t)appTxBroker.diagnostics.composed;
     j += ",\"accepted\":";
@@ -2130,6 +2105,8 @@ static void handleStatus()
 
 static void handleConfig()
 {
+    AppConfigTransaction transaction;
+    if (!transaction.ready) { transaction.finish(); server.send(503,"application/json","{\"ok\":false,\"error\":\"CAN quiesce failed\"}"); return; }
     bool hwChanged = false;
     if (server.hasArg("hw"))
     {
@@ -2194,7 +2171,6 @@ static void handleConfig()
         {
             dashCanPriorityMode = v;
             dashLog("[CFG] CAN Priority Mode " + String(v ? "ON" : "OFF"));
-            dashApplyCanFilterPolicy();
         }
     }
     if (server.hasArg("hw3OffsetSlew"))
@@ -2313,12 +2289,16 @@ static void handleConfig()
         dashApplyFilters();
     }
     dashApplyRuntimeState();
+    dashApplyCanFilterPolicy();
     dashSavePrefs();
+    transaction.finish();
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
 static void handleLoggingConfig()
 {
+    AppConfigTransaction transaction;
+    if (!transaction.ready) { transaction.finish(); server.send(503,"application/json","{\"ok\":false,\"error\":\"CAN quiesce failed\"}"); return; }
     if (server.hasArg("eprn") && dashHandler)
     {
         bool ep = server.arg("eprn") == "1";
@@ -2327,6 +2307,7 @@ static void handleLoggingConfig()
     }
     dashApplyRuntimeState();
     dashSavePrefs();
+    transaction.finish();
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -2472,11 +2453,6 @@ static void handleReboot()
 
 static void handleOtaResult()
 {
-    if (!server.authenticate(DASH_OTA_USER, DASH_OTA_PASS))
-    {
-        server.requestAuthentication();
-        return;
-    }
     bool ok = Update.isFinished() && !Update.hasError();
     server.sendHeader("Connection", "close");
     server.send(ok ? 200 : 500, "text/plain", ok ? "OK" : Update.errorString());
@@ -2495,8 +2471,6 @@ static void handleOtaResult()
 
 static void handleOtaUpload()
 {
-    if (!server.authenticate(DASH_OTA_USER, DASH_OTA_PASS))
-        return;
     HTTPUpload &upload = server.upload();
     if (upload.status == UPLOAD_FILE_START)
     {
@@ -2862,6 +2836,14 @@ static void dashEnterLowPowerSleep()
 {
     if (dashSleepActive)
         return;
+    if (!appQuiesceRuntime())
+    {
+        dashLog("[SLEEP] CAN quiesce failed; sleep deferred");
+        appResumeRuntime();
+        return;
+    }
+    AppCanLock runtimeLock;
+    if (!dashSleepParkLockReady()) { appResumeRuntime(); return; }
     dashSleepSavedCanActive = canActive;
     dashSleepSavedForceActivate = forceActivate;
     canActive = false;
@@ -4997,7 +4979,10 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
 
     ArduinoOTA.setHostname("ev-open-can-tools");
-    ArduinoOTA.setPassword(DASH_OTA_PASS);
+#ifdef ESP_PLATFORM
+    Update.beforeBegin = appQuiesceRuntime;
+    Update.afterAbort = appResumeRuntime;
+#endif
     ArduinoOTA.onStart([]()
                        { dashLog("[OTA] Starting..."); });
     ArduinoOTA.onEnd([]()

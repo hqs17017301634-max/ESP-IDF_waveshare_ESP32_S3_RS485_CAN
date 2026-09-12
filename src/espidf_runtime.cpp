@@ -870,10 +870,18 @@ bool UpdateClass::begin(size_t)
         setError("No OTA partition");
         return false;
     }
+    lifecycleHeld_ = true;
+    if (beforeBegin && !beforeBegin())
+    {
+        setError("CAN quiesce failed");
+        abort();
+        return false;
+    }
     esp_err_t err = esp_ota_begin(partition_, OTA_SIZE_UNKNOWN, &handle_);
     if (err != ESP_OK)
     {
         setError(esp_err_to_name(err));
+        abort();
         return false;
     }
     running_ = true;
@@ -920,12 +928,14 @@ bool UpdateClass::end(bool)
     if (err != ESP_OK)
     {
         setError(esp_err_to_name(err));
+        abort();
         return false;
     }
     err = esp_ota_set_boot_partition(partition_);
     if (err != ESP_OK)
     {
         setError(esp_err_to_name(err));
+        abort();
         return false;
     }
     finished_ = true;
@@ -940,6 +950,7 @@ void UpdateClass::abort()
     finished_ = false;
     handle_ = 0;
     partition_ = nullptr;
+    if (lifecycleHeld_) { lifecycleHeld_ = false; if (afterAbort) afterAbort(); }
 }
 
 void WebServer::on(const char *uriValue, http_method methodValue, Handler handler)
